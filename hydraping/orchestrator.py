@@ -47,6 +47,7 @@ class CheckOrchestrator:
         # Control flags
         self._running = False
         self._task: asyncio.Task | None = None
+        self.start_time: float | None = None  # Monotonic time when checks started
 
     async def start(self):
         """Start the orchestration loop."""
@@ -72,6 +73,7 @@ class CheckOrchestrator:
 
         interval = self.config.checks.interval_seconds
         start_time = time.monotonic()
+        self.start_time = start_time  # Expose for graph rendering
         iteration = 0
 
         while self._running:

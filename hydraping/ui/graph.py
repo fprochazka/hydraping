@@ -17,9 +17,11 @@ class LatencyGraph:
         """Initialize graph with fixed width."""
         self.width = width
 
-    def render(self, results: list[CheckResult]) -> tuple[str, str, str]:
+    def render(
+        self, results: list[CheckResult], start_time: float | None, interval_seconds: float
+    ) -> tuple[str, str, str]:
         """
-        Render graph from check results.
+        Render graph from check results with time-bucket awareness.
 
         Returns:
             Tuple of (padding, bars, color) where:
@@ -27,33 +29,77 @@ class LatencyGraph:
             - bars is the actual data bars
             - color is the Rich color for the bars
         """
-        if not results:
-            # Empty graph - all dots
+        import time
+
+        if start_time is None:
+            # Not started yet - all dots
             return self.EMPTY_CHAR * self.width, "", "dim"
 
-        # Take only the most recent results that fit in the width
-        recent_results = results[-self.width :]
+        # Calculate current time bucket
+        now = time.monotonic()
+        elapsed = now - start_time
+        current_bucket = int(elapsed / interval_seconds)
 
-        # Build graph bars from left to right (oldest to newest)
+        # Calculate which buckets to display (most recent width buckets)
+        start_bucket = max(0, current_bucket - self.width + 1)
+        end_bucket = current_bucket + 1
+
+        # Create a dict of results by bucket number
+        results_by_bucket = {}
+        for result in results:
+            timestamp_s = result.timestamp.timestamp()
+            # Convert to monotonic time approximation (may have slight drift)
+            bucket = int(timestamp_s / interval_seconds)
+            # Keep best result per bucket
+            if bucket not in results_by_bucket:
+                results_by_bucket[bucket] = result
+            else:
+                current_latency = results_by_bucket[bucket].latency_ms or float("inf")
+                new_latency = result.latency_ms or float("inf")
+                if new_latency < current_latency:
+                    results_by_bucket[bucket] = result
+
+        # Build graph bars for each bucket in range
         bars = []
         overall_color = "green"
 
-        for result in recent_results:
-            if result.success and result.latency_ms is not None:
+        for bucket_num in range(start_bucket, end_bucket):
+            result = results_by_bucket.get(bucket_num)
+
+            if result is None:
+                # No data for this bucket yet - show dot
+                bars.append(self.EMPTY_CHAR)
+            elif result.success and result.latency_ms is not None:
                 # Calculate bar height and color based on latency
                 bar, color = self._get_bar_for_latency(result.latency_ms)
                 bars.append(bar)
-
-                # Update overall color (worst color wins)
                 overall_color = self._worst_color(overall_color, color)
             else:
                 # Failed check - use exclamation mark
                 bars.append("!")
                 overall_color = "red"
 
-        # Return padding and bars separately
-        padding = self.EMPTY_CHAR * (self.width - len(bars))
-        bars_str = "".join(bars)
+        # Ensure we have exactly self.width characters
+        if len(bars) > self.width:
+            bars = bars[-self.width :]  # Take most recent
+        elif len(bars) < self.width:
+            # Pad on the left with dots
+            padding_needed = self.width - len(bars)
+            bars = [self.EMPTY_CHAR] * padding_needed + bars
+
+        # Split into padding and actual bars (all dim dots are padding)
+        # Find first non-dot character
+        first_data_idx = 0
+        for i, char in enumerate(bars):
+            if char != self.EMPTY_CHAR:
+                first_data_idx = i
+                break
+        else:
+            # All dots
+            return "".join(bars), "", "dim"
+
+        padding = "".join(bars[:first_data_idx])
+        bars_str = "".join(bars[first_data_idx:])
 
         return padding, bars_str, overall_color
 

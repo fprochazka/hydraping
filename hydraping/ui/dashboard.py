@@ -132,7 +132,11 @@ class Dashboard:
             graph_history = []
 
         graph_renderer = self.graphs[endpoint.raw]
-        padding, bars, bars_color = graph_renderer.render(graph_history)
+        padding, bars, bars_color = graph_renderer.render(
+            graph_history,
+            self.orchestrator.start_time,
+            self.orchestrator.config.checks.interval_seconds,
+        )
 
         # Combine padding (always dim) with bars (colored)
         graph_text = Text()
