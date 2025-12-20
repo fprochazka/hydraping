@@ -101,30 +101,30 @@ class LatencyGraph:
         """
         Get bar character and color for a given latency.
 
-        Uses prettyping-inspired color scheme:
-        - Green: <50ms
-        - Yellow on green: 50-100ms
-        - Red on yellow: 100-200ms
-        - Red: >200ms
+        Color scheme matching latency severity:
+        - Green: <50ms (good)
+        - Yellow: 50-100ms (medium)
+        - Bright yellow/orange: 100-200ms (concerning)
+        - Red: >200ms (bad)
 
         Returns:
             Tuple of (bar_character, color_name)
         """
         # Determine color zone and height within that zone
         if latency_ms < 50:
-            # Green zone (0-50ms)
+            # Green zone (0-50ms) - good
             color = "green"
             ratio = latency_ms / 50.0
         elif latency_ms < 100:
-            # Yellow on green background (50-100ms)
-            color = "yellow on green"
+            # Yellow zone (50-100ms) - medium
+            color = "yellow"
             ratio = (latency_ms - 50) / 50.0
         elif latency_ms < 200:
-            # Red on yellow background (100-200ms)
-            color = "red on yellow"
+            # Orange zone (100-200ms) - concerning
+            color = "bright_yellow"
             ratio = (latency_ms - 100) / 100.0
         else:
-            # Pure red (>200ms)
+            # Red zone (>200ms) - bad
             color = "red"
             ratio = min((latency_ms - 200) / 300.0, 1.0)
 
@@ -132,15 +132,15 @@ class LatencyGraph:
         block_index = int(ratio * 7)  # 0-7
         block_index = max(0, min(7, block_index))  # Clamp to valid range
 
-        bar = self.BLOCKS[block_index + 1]  # Skip first block (░)
+        bar = self.BLOCKS[block_index + 1]  # Skip first block (·)
 
         return bar, color
 
     @staticmethod
     def _worst_color(color1: str, color2: str) -> str:
         """Return the 'worse' of two colors (for overall graph color)."""
-        # Order from best to worst (matching prettyping zones)
-        color_priority = ["green", "yellow on green", "red on yellow", "red"]
+        # Order from best to worst
+        color_priority = ["green", "yellow", "bright_yellow", "red"]
 
         idx1 = color_priority.index(color1) if color1 in color_priority else 0
         idx2 = color_priority.index(color2) if color2 in color_priority else 0
