@@ -89,10 +89,11 @@ class CheckOrchestrator:
             check_tasks.append(self._check_tcp(endpoint, endpoint.ip, endpoint.port))
 
         elif isinstance(endpoint, DomainEndpoint):
-            # For domain: DNS, ICMP, and TCP checks
+            # For domain: DNS, ICMP, and TCP checks (try both HTTP and HTTPS ports)
             check_tasks.append(self._check_dns(endpoint, endpoint.domain))
             check_tasks.append(self._check_icmp(endpoint, endpoint.domain))
-            check_tasks.append(self._check_tcp(endpoint, endpoint.domain, endpoint.port))
+            check_tasks.append(self._check_tcp(endpoint, endpoint.domain, 80))  # HTTP
+            check_tasks.append(self._check_tcp(endpoint, endpoint.domain, 443))  # HTTPS
 
         elif isinstance(endpoint, HTTPEndpoint):
             # For HTTP endpoint, run DNS, ICMP, TCP, and HTTP

@@ -76,7 +76,7 @@ class Dashboard:
         """Add a row for an endpoint to the table."""
         # Get the most relevant check result for latency display
         # Priority: HTTP > TCP > DNS > ICMP (most abstract/high-level first)
-        # Show the highest-level successful check for better diagnostics
+        # TCP will show port 80 or 443, whichever succeeded most recently
         latency_result = None
         for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]:
             result = self.orchestrator.get_latest_result(endpoint, check_type)
