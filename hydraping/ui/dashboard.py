@@ -174,13 +174,13 @@ class Dashboard:
         return deduplicated
 
     def _get_latency_color(self, latency_ms: float) -> str:
-        """Get color for latency value."""
+        """Get color for latency value (matching graph color zones)."""
         if latency_ms < 50:
             return "green"
-        elif latency_ms < 150:
+        elif latency_ms < 100:
             return "yellow"
-        elif latency_ms < 300:
-            return "bright_yellow"
+        elif latency_ms < 200:
+            return "bright_yellow"  # Orange-ish
         else:
             return "red"
 
