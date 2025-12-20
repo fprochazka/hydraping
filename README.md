@@ -84,6 +84,10 @@ Supported endpoint formats:
 # Install with dev dependencies
 poetry install
 
+# Run linter with auto-fix and formatter (after code changes)
+source .venv/bin/activate && ruff check --fix . && ruff format .
+
+# Or individually:
 # Run linter
 ruff check .
 
