@@ -113,7 +113,7 @@ custom_servers = []
 
 [checks]
 # How often to perform checks (in seconds)
-interval_seconds = 1.0
+interval_seconds = 5.0
 
 # Timeout for individual checks (in seconds)
 timeout_seconds = 5.0
