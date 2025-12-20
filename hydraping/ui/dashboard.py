@@ -36,14 +36,18 @@ class Dashboard:
         # Cap at reasonable max
         self.endpoint_width = min(self.endpoint_width, 30)
 
-        # Latency column: fixed width for "999.9ms (TCP:443)"
-        self.latency_width = 20
+        # Latency time column: fixed width for "999.9ms" (8 chars)
+        self.latency_time_width = 8
+
+        # Protocol column: fixed width for "(TCP:443)" (10 chars)
+        self.protocol_width = 10
 
         # Spacing between columns (2 spaces between each)
-        spacing = 4  # 2 spaces before graph, 2 spaces before latency
+        spacing = 6  # 2 spaces * 3 gaps (endpoint-graph, graph-time, time-protocol)
 
         # Graph column: remaining space
-        self.graph_width = terminal_width - self.endpoint_width - self.latency_width - spacing
+        total_fixed = self.endpoint_width + self.latency_time_width + self.protocol_width + spacing
+        self.graph_width = terminal_width - total_fixed
         # Ensure minimum width
         self.graph_width = max(self.graph_width, 20)
 
@@ -54,7 +58,8 @@ class Dashboard:
         # Add columns with fixed widths
         table.add_column("Endpoint", width=self.endpoint_width, no_wrap=True)
         table.add_column("Graph", width=self.graph_width, no_wrap=True)
-        table.add_column("Latency", width=self.latency_width, justify="right", no_wrap=True)
+        table.add_column("Time", width=self.latency_time_width, justify="right", no_wrap=True)
+        table.add_column("Protocol", width=self.protocol_width, justify="left", no_wrap=True)
 
         # Add rows for each endpoint
         for endpoint in self.orchestrator.endpoints:
@@ -92,7 +97,7 @@ class Dashboard:
                     latency_result = result
                     break
 
-        # Format latency with check type indicator (right-aligned latency number)
+        # Format latency time and protocol separately
         if latency_result and latency_result.success and latency_result.latency_ms is not None:
             # Build check label with port/protocol info
             check_label = latency_result.check_type.value.upper()
@@ -101,36 +106,32 @@ class Dashboard:
             elif latency_result.check_type == CheckType.HTTP and latency_result.protocol:
                 check_label = latency_result.protocol.upper()
 
-            # Right-align latency number for column alignment (e.g., "   8.2ms")
-            latency_str = f"{latency_result.latency_ms:>6.1f}ms ({check_label})"
+            time_str = f"{latency_result.latency_ms:.1f}ms"
+            protocol_str = f"({check_label})"
             latency_style = self._get_latency_color(latency_result.latency_ms)
         elif latency_result and not latency_result.success:
             check_label = latency_result.check_type.value.upper()
-            latency_str = f"  FAIL ({check_label})"
+            time_str = "FAIL"
+            protocol_str = f"({check_label})"
             latency_style = "red"
         else:
-            latency_str = "   N/A"
+            time_str = "N/A"
+            protocol_str = ""
             latency_style = "dim"
 
-        # Get graph - use best available check type
-        # Priority: HTTP > TCP > DNS > ICMP (most abstract/high-level first)
-        # Show the highest-level check with successful results
-        graph_history = None
+        # Get graph - merge all successful check results across all check types
+        # This ensures we show data as soon as ANY check completes, not just the highest priority
+        all_successful_results = []
         for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]:
             history = self.orchestrator.get_history(endpoint, check_type)
             if history:
-                # Only use checks with successful results
-                successful_history = [r for r in history if r.success]
-                if successful_history:
-                    # Deduplicate by time interval to handle multiple checks per interval
-                    # (e.g., TCP on ports 80 and 443 both run every interval)
-                    graph_history = self._deduplicate_by_interval(
-                        successful_history, self.orchestrator.config.checks.interval_seconds
-                    )
-                    break
+                # Collect all successful results
+                all_successful_results.extend([r for r in history if r.success])
 
-        if graph_history is None:
-            graph_history = []
+        # Deduplicate by time interval - keeps best result per bucket across all check types
+        graph_history = self._deduplicate_by_interval(
+            all_successful_results, self.orchestrator.config.checks.interval_seconds
+        )
 
         graph_renderer = self.graphs[endpoint.raw]
         graph_text = graph_renderer.render(
@@ -143,7 +144,8 @@ class Dashboard:
         table.add_row(
             Text(endpoint.display_name, style="bold"),
             graph_text,
-            Text(latency_str, style=latency_style),
+            Text(time_str, style=latency_style),
+            Text(protocol_str, style="dim"),
         )
 
     def _deduplicate_by_interval(self, results: list, interval_seconds: float) -> list:
