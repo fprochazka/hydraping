@@ -128,12 +128,17 @@ class Dashboard:
             graph_history = []
 
         graph_renderer = self.graphs[endpoint.raw]
-        graph_str, graph_color = graph_renderer.render(graph_history)
+        padding, bars, bars_color = graph_renderer.render(graph_history)
+
+        # Combine padding (always dim) with bars (colored)
+        graph_text = Text()
+        graph_text.append(padding, style="dim")
+        graph_text.append(bars, style=bars_color)
 
         # Add row
         table.add_row(
             Text(endpoint.display_name, style="bold"),
-            Text(graph_str, style=graph_color),
+            graph_text,
             Text(latency_str, style=latency_style),
         )
 

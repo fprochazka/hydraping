@@ -68,7 +68,21 @@ class CheckOrchestrator:
 
     async def _run_loop(self):
         """Main loop that runs checks at configured interval."""
+        import time
+
+        interval = self.config.checks.interval_seconds
+        start_time = time.monotonic()
+        iteration = 0
+
         while self._running:
+            # Calculate when this check should start (aligned to interval)
+            target_time = start_time + (iteration * interval)
+            now = time.monotonic()
+
+            # If we're behind schedule, start immediately
+            if now < target_time:
+                await asyncio.sleep(target_time - now)
+
             # Run checks for all endpoints concurrently
             tasks = [self._check_endpoint(endpoint) for endpoint in self.endpoints]
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -78,8 +92,7 @@ class CheckOrchestrator:
                 # Call with None to signal "interval complete, refresh all"
                 self.on_result(None, None)
 
-            # Wait for the configured interval
-            await asyncio.sleep(self.config.checks.interval_seconds)
+            iteration += 1
 
     async def _check_endpoint(self, endpoint: Endpoint):
         """Run all applicable checks for a single endpoint."""
