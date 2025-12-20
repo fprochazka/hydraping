@@ -36,8 +36,8 @@ class Dashboard:
         # Cap at reasonable max
         self.endpoint_width = min(self.endpoint_width, 30)
 
-        # Latency column: fixed width for "999.9ms (ICMP)"
-        self.latency_width = 17
+        # Latency column: fixed width for "999.9ms (TCP:443)"
+        self.latency_width = 20
 
         # Spacing between columns (2 spaces between each)
         spacing = 4  # 2 spaces before graph, 2 spaces before latency
