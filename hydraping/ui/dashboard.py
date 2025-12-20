@@ -36,8 +36,8 @@ class Dashboard:
         # Cap at reasonable max
         self.endpoint_width = min(self.endpoint_width, 30)
 
-        # Latency column: fixed width for "999.99ms"
-        self.latency_width = 10
+        # Latency column: fixed width for "999.9ms (ICMP)"
+        self.latency_width = 17
 
         # Spacing between columns (2 spaces between each)
         spacing = 4  # 2 spaces before graph, 2 spaces before latency
@@ -83,15 +83,17 @@ class Dashboard:
                 latency_result = result
                 break
 
-        # Format latency
+        # Format latency with check type indicator
         if latency_result and latency_result.success and latency_result.latency_ms is not None:
-            latency_str = f"{latency_result.latency_ms:.1f}ms"
+            check_label = latency_result.check_type.value.upper()
+            latency_str = f"{latency_result.latency_ms:.1f}ms ({check_label})"
             latency_style = self._get_latency_color(latency_result.latency_ms)
         elif latency_result and not latency_result.success:
-            latency_str = "FAIL"
+            check_label = latency_result.check_type.value.upper()
+            latency_str = f"FAIL ({check_label})"
             latency_style = "red"
         else:
-            latency_str = "-"
+            latency_str = "N/A"
             latency_style = "dim"
 
         # Get graph - use best available check type
