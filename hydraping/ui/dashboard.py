@@ -79,17 +79,14 @@ class Dashboard:
 
     def _add_endpoint_row(self, table: Table, endpoint: Endpoint):
         """Add a row for an endpoint to the table."""
-        # Get the best (lowest latency) successful check result for latency display
-        # This matches what the graph shows
+        # Get the highest-priority successful check result for latency display
+        # Priority: HTTP > TCP > DNS > ICMP (show the most comprehensive check)
         latency_result = None
-        best_latency = float("inf")
-
         for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]:
             result = self.orchestrator.get_latest_result(endpoint, check_type)
             if result and result.success and result.latency_ms is not None:
-                if result.latency_ms < best_latency:
-                    best_latency = result.latency_ms
-                    latency_result = result
+                latency_result = result
+                break
 
         # If no successful check, show the highest-priority failure
         if not latency_result:
@@ -152,13 +149,21 @@ class Dashboard:
 
     def _deduplicate_by_interval(self, results: list, interval_seconds: float) -> list:
         """
-        Deduplicate results by time interval, keeping the best result per interval.
+        Deduplicate results by time interval, keeping the highest-priority result per interval.
 
-        When multiple checks run in the same interval (e.g., TCP on ports 80 and 443),
-        we only want to show one data point per interval on the graph.
+        When multiple checks run in the same interval, prefer higher-priority checks
+        (HTTP > TCP > DNS > ICMP) to match what the latency column shows.
         """
         if not results:
             return []
+
+        # Check type priority (HTTP is highest, ICMP is lowest)
+        priority_order = {
+            CheckType.HTTP: 0,
+            CheckType.TCP: 1,
+            CheckType.DNS: 2,
+            CheckType.ICMP: 3,
+        }
 
         # Group results by time bucket (use interval in seconds for consistent bucketing)
         buckets = {}
@@ -169,13 +174,13 @@ class Dashboard:
             timestamp_s = result.timestamp.timestamp()
             bucket = int(timestamp_s / interval_seconds)
 
-            # Keep only the best (lowest latency) result per bucket
+            # Keep the highest-priority result per bucket
             if bucket not in buckets:
                 buckets[bucket] = result
             else:
-                current_latency = buckets[bucket].latency_ms or float("inf")
-                new_latency = result.latency_ms or float("inf")
-                if new_latency < current_latency:
+                current_priority = priority_order.get(buckets[bucket].check_type, 999)
+                new_priority = priority_order.get(result.check_type, 999)
+                if new_priority < current_priority:
                     buckets[bucket] = result
 
         # Sort by bucket number (chronological order)
