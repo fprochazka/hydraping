@@ -11,6 +11,22 @@ Multi-protocol connection tester with live terminal UI - Because it has many "he
 
 ## Installation
 
+### From Git (recommended for development)
+
+```bash
+# Clone the repository
+git clone https://github.com/fprochazka/hydraping.git
+cd hydraping
+
+# Install with pipx
+pipx install .
+
+# Or install in editable mode for development
+pipx install -e .
+```
+
+### From PyPI (when published)
+
 ```bash
 pipx install hydraping
 ```
@@ -31,10 +47,10 @@ hydraping --config /path/to/config.toml
 ### Example Output
 
 ```
-1.1.1.1                      ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▁▁▁▁▁▁▁▁▁      8.2ms (ICMP)
-8.8.8.8                      ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▁▁▁▁▁▁▁▁▁     12.5ms (ICMP)
-google.com                   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▂▂▁▁▁▁▁▁▁▁▁▁     15.3ms (TCP)
-https://filip-prochazka.com/ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░▃▃▄▃▃▃▃▃▃▃    145.7ms (HTTP)
+1.1.1.1                      .................................................▁▁▁▁▁▁▁▁▁       8.2ms (ICMP)
+8.8.8.8                      .................................................▁▁▁▁▁▁▁▁▁      12.5ms (ICMP)
+google.com                   ..............................................▂▂▁▁▁▁▁▁▁▁▁▁      15.3ms (TCP)
+https://filip-prochazka.com/ ................................................▃▃▄▃▃▃▃▃▃▃     145.7ms (HTTP)
 
 Problems:
   • ICMP unavailable (no permissions) - ping checks disabled
@@ -86,13 +102,6 @@ poetry install
 
 # Run linter with auto-fix and formatter (after code changes)
 source .venv/bin/activate && ruff check --fix . && ruff format .
-
-# Or individually:
-# Run linter
-ruff check .
-
-# Run formatter
-ruff format .
 
 # Run tests
 pytest

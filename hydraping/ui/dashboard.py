@@ -92,7 +92,7 @@ class Dashboard:
                     latency_result = result
                     break
 
-        # Format latency with check type indicator
+        # Format latency with check type indicator (right-aligned latency number)
         if latency_result and latency_result.success and latency_result.latency_ms is not None:
             # Build check label with port/protocol info
             check_label = latency_result.check_type.value.upper()
@@ -101,14 +101,15 @@ class Dashboard:
             elif latency_result.check_type == CheckType.HTTP and latency_result.protocol:
                 check_label = latency_result.protocol.upper()
 
-            latency_str = f"{latency_result.latency_ms:.1f}ms ({check_label})"
+            # Right-align latency number for column alignment (e.g., "   8.2ms")
+            latency_str = f"{latency_result.latency_ms:>6.1f}ms ({check_label})"
             latency_style = self._get_latency_color(latency_result.latency_ms)
         elif latency_result and not latency_result.success:
             check_label = latency_result.check_type.value.upper()
-            latency_str = f"FAIL ({check_label})"
+            latency_str = f"  FAIL ({check_label})"
             latency_style = "red"
         else:
-            latency_str = "N/A"
+            latency_str = "   N/A"
             latency_style = "dim"
 
         # Get graph - use best available check type
