@@ -1,5 +1,7 @@
 """Latency graph rendering for terminal UI."""
 
+from rich.text import Text
+
 from hydraping.models import CheckResult
 
 
@@ -19,21 +21,18 @@ class LatencyGraph:
 
     def render(
         self, results: list[CheckResult], start_time: float | None, interval_seconds: float
-    ) -> tuple[str, str, str]:
+    ) -> Text:
         """
         Render graph from check results with time-bucket awareness.
 
         Returns:
-            Tuple of (padding, bars, color) where:
-            - padding is the left padding (dim dots)
-            - bars is the actual data bars
-            - color is the Rich color for the bars
+            Text object with properly styled graph
         """
         import time
 
         if start_time is None:
             # Not started yet - all dots
-            return self.EMPTY_CHAR * self.width, "", "dim"
+            return Text(self.EMPTY_CHAR * self.width, style="dim")
 
         # Calculate current time bucket
         now = time.monotonic()
@@ -66,49 +65,37 @@ class LatencyGraph:
                 if new_latency < current_latency:
                     results_by_bucket[bucket] = result
 
-        # Build graph bars for each bucket in range
-        bars = []
-        overall_color = "green"
+        # Build graph with proper styling per character
+        graph_text = Text()
 
-        for bucket_num in range(start_bucket, end_bucket):
+        # Calculate which buckets to display
+        buckets_to_show = list(range(start_bucket, end_bucket))
+
+        # Ensure we show exactly self.width buckets
+        if len(buckets_to_show) > self.width:
+            buckets_to_show = buckets_to_show[-self.width :]
+        elif len(buckets_to_show) < self.width:
+            # Pad on the left with empty buckets
+            padding_needed = self.width - len(buckets_to_show)
+            padding_buckets = list(range(start_bucket - padding_needed, start_bucket))
+            buckets_to_show = padding_buckets + buckets_to_show
+
+        # Render each bucket with appropriate styling
+        for bucket_num in buckets_to_show:
             result = results_by_bucket.get(bucket_num)
 
             if result is None:
-                # No data for this bucket yet - show dot
-                bars.append(self.EMPTY_CHAR)
+                # No data for this bucket yet - show dim dot
+                graph_text.append(self.EMPTY_CHAR, style="dim")
             elif result.success and result.latency_ms is not None:
                 # Calculate bar height and color based on latency
                 bar, color = self._get_bar_for_latency(result.latency_ms)
-                bars.append(bar)
-                overall_color = self._worst_color(overall_color, color)
+                graph_text.append(bar, style=color)
             else:
-                # Failed check - use exclamation mark
-                bars.append("!")
-                overall_color = "red"
+                # Failed check - use red exclamation mark
+                graph_text.append("!", style="red")
 
-        # Ensure we have exactly self.width characters
-        if len(bars) > self.width:
-            bars = bars[-self.width :]  # Take most recent
-        elif len(bars) < self.width:
-            # Pad on the left with dots
-            padding_needed = self.width - len(bars)
-            bars = [self.EMPTY_CHAR] * padding_needed + bars
-
-        # Split into padding and actual bars (all dim dots are padding)
-        # Find first non-dot character
-        first_data_idx = 0
-        for i, char in enumerate(bars):
-            if char != self.EMPTY_CHAR:
-                first_data_idx = i
-                break
-        else:
-            # All dots
-            return "".join(bars), "", "dim"
-
-        padding = "".join(bars[:first_data_idx])
-        bars_str = "".join(bars[first_data_idx:])
-
-        return padding, bars_str, overall_color
+        return graph_text
 
     def _get_bar_for_latency(self, latency_ms: float) -> tuple[str, str]:
         """

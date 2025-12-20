@@ -132,16 +132,11 @@ class Dashboard:
             graph_history = []
 
         graph_renderer = self.graphs[endpoint.raw]
-        padding, bars, bars_color = graph_renderer.render(
+        graph_text = graph_renderer.render(
             graph_history,
             self.orchestrator.start_time,
             self.orchestrator.config.checks.interval_seconds,
         )
-
-        # Combine padding (always dim) with bars (colored)
-        graph_text = Text()
-        graph_text.append(padding, style="dim")
-        graph_text.append(bars, style=bars_color)
 
         # Add row
         table.add_row(
@@ -240,5 +235,3 @@ class Dashboard:
         finally:
             await self.orchestrator.stop()
             live.stop()
-            # Print newline to leave cursor on clean line
-            self.console.print()
