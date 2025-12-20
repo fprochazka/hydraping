@@ -104,7 +104,7 @@ class LatencyGraph:
         Color scheme matching latency severity:
         - Green: <50ms (good)
         - Yellow: 50-100ms (medium)
-        - Bright yellow/orange: 100-200ms (concerning)
+        - Orange: 100-200ms (concerning)
         - Red: >200ms (bad)
 
         Returns:
@@ -121,7 +121,7 @@ class LatencyGraph:
             ratio = (latency_ms - 50) / 50.0
         elif latency_ms < 200:
             # Orange zone (100-200ms) - concerning
-            color = "bright_yellow"
+            color = "orange1"
             ratio = (latency_ms - 100) / 100.0
         else:
             # Red zone (>200ms) - bad
@@ -140,7 +140,7 @@ class LatencyGraph:
     def _worst_color(color1: str, color2: str) -> str:
         """Return the 'worse' of two colors (for overall graph color)."""
         # Order from best to worst
-        color_priority = ["green", "yellow", "bright_yellow", "red"]
+        color_priority = ["green", "yellow", "orange1", "red"]
 
         idx1 = color_priority.index(color1) if color1 in color_priority else 0
         idx2 = color_priority.index(color2) if color2 in color_priority else 0

@@ -184,7 +184,7 @@ class Dashboard:
         elif latency_ms < 100:
             return "yellow"
         elif latency_ms < 200:
-            return "bright_yellow"  # Orange-ish
+            return "orange1"
         else:
             return "red"
 
