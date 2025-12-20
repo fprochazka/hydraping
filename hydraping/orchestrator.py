@@ -87,11 +87,6 @@ class CheckOrchestrator:
             tasks = [self._check_endpoint(endpoint) for endpoint in self.endpoints]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Notify UI once after all checks complete (synchronized update)
-            if self.on_result:
-                # Call with None to signal "interval complete, refresh all"
-                self.on_result(None, None)
-
             iteration += 1
 
     async def _check_endpoint(self, endpoint: Endpoint):
@@ -145,8 +140,12 @@ class CheckOrchestrator:
         self._store_result(endpoint, result)
 
     def _store_result(self, endpoint: Endpoint, result: CheckResult):
-        """Store result in history."""
+        """Store result in history and notify UI immediately."""
         self.history[endpoint.raw].append(result)
+
+        # Trigger UI update immediately when result is available
+        if self.on_result:
+            self.on_result(endpoint, result)
 
     def get_latest_result(self, endpoint: Endpoint, check_type: CheckType) -> CheckResult | None:
         """Get the most recent result for an endpoint and check type."""
