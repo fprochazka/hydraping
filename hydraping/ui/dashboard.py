@@ -75,13 +75,22 @@ class Dashboard:
     def _add_endpoint_row(self, table: Table, endpoint: Endpoint):
         """Add a row for an endpoint to the table."""
         # Get the most relevant check result for latency display
-        # Priority: HTTP > TCP > ICMP > DNS
+        # Priority: HTTP > TCP > DNS > ICMP (most abstract/high-level first)
+        # Show the highest-level successful check for better diagnostics
         latency_result = None
-        for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.ICMP, CheckType.DNS]:
+        for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]:
             result = self.orchestrator.get_latest_result(endpoint, check_type)
-            if result and (result.success or "unavailable" not in result.error_message):
+            if result and result.success:
                 latency_result = result
                 break
+
+        # If no successful check, show the highest-level failure
+        if not latency_result:
+            for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]:
+                result = self.orchestrator.get_latest_result(endpoint, check_type)
+                if result and "unavailable" not in result.error_message:
+                    latency_result = result
+                    break
 
         # Format latency with check type indicator
         if latency_result and latency_result.success and latency_result.latency_ms is not None:
@@ -97,17 +106,16 @@ class Dashboard:
             latency_style = "dim"
 
         # Get graph - use best available check type
-        # Priority: ICMP > DNS > TCP > HTTP
+        # Priority: HTTP > TCP > DNS > ICMP (most abstract/high-level first)
+        # Show the highest-level check with successful results
         graph_history = None
-        for check_type in [CheckType.ICMP, CheckType.DNS, CheckType.TCP, CheckType.HTTP]:
+        for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]:
             history = self.orchestrator.get_history(endpoint, check_type)
             if history:
-                # Filter out "unavailable" errors
-                valid_history = [
-                    r for r in history if r.success or "unavailable" not in r.error_message
-                ]
-                if valid_history:
-                    graph_history = valid_history
+                # Only use checks with successful results
+                successful_history = [r for r in history if r.success]
+                if successful_history:
+                    graph_history = successful_history
                     break
 
         if graph_history is None:

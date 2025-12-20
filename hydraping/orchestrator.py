@@ -89,12 +89,10 @@ class CheckOrchestrator:
             check_tasks.append(self._check_tcp(endpoint, endpoint.ip, endpoint.port))
 
         elif isinstance(endpoint, DomainEndpoint):
-            # For domain, first do DNS, then ICMP on resolved IP
-            _ = await self._check_dns(endpoint, endpoint.domain)
-            # Note: We could extract the resolved IP and ping it,
-            # but for now we'll just do DNS check
-            # In the future, we might want to store resolved IP and ping it
+            # For domain: DNS, ICMP, and TCP checks
+            check_tasks.append(self._check_dns(endpoint, endpoint.domain))
             check_tasks.append(self._check_icmp(endpoint, endpoint.domain))
+            check_tasks.append(self._check_tcp(endpoint, endpoint.domain, endpoint.port))
 
         elif isinstance(endpoint, HTTPEndpoint):
             # For HTTP endpoint, run DNS, ICMP, TCP, and HTTP

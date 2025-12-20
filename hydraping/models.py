@@ -124,17 +124,25 @@ class IPPortEndpoint(Endpoint):
 
 @dataclass
 class DomainEndpoint(Endpoint):
-    """Domain name endpoint - DNS + ICMP checks."""
+    """Domain name endpoint - DNS + ICMP + TCP checks."""
 
     domain: str
+    port: int = 80  # Default to HTTP port
 
     def __post_init__(self):
         """Set endpoint type."""
         self.endpoint_type = EndpointType.DOMAIN
 
+    @property
+    def display_name(self) -> str:
+        """Human-readable name for display in UI."""
+        if self.port != 80:
+            return f"{self.domain}:{self.port}"
+        return self.domain
+
     def get_check_types(self) -> list[CheckType]:
         """Return list of check types applicable to this endpoint."""
-        return [CheckType.DNS, CheckType.ICMP]
+        return [CheckType.DNS, CheckType.ICMP, CheckType.TCP]
 
 
 @dataclass
