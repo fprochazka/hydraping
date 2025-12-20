@@ -15,6 +15,8 @@ app = typer.Typer(
     name="hydraping",
     help="Multi-protocol connection tester with live terminal UI",
     add_completion=False,
+    rich_markup_mode=None,
+    pretty_exceptions_enable=False,
 )
 
 console = Console()

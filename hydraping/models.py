@@ -87,7 +87,10 @@ class IPEndpoint(Endpoint):
     """IP address endpoint - only ICMP check."""
 
     ip: str
-    endpoint_type: EndpointType = EndpointType.IP
+
+    def __post_init__(self):
+        """Set endpoint type."""
+        self.endpoint_type = EndpointType.IP
 
     def get_check_types(self) -> list[CheckType]:
         """Return list of check types applicable to this endpoint."""
@@ -100,7 +103,10 @@ class IPPortEndpoint(Endpoint):
 
     ip: str
     port: int
-    endpoint_type: EndpointType = EndpointType.IP_PORT
+
+    def __post_init__(self):
+        """Set endpoint type."""
+        self.endpoint_type = EndpointType.IP_PORT
 
     @property
     def display_name(self) -> str:
@@ -117,7 +123,10 @@ class DomainEndpoint(Endpoint):
     """Domain name endpoint - DNS + ICMP checks."""
 
     domain: str
-    endpoint_type: EndpointType = EndpointType.DOMAIN
+
+    def __post_init__(self):
+        """Set endpoint type."""
+        self.endpoint_type = EndpointType.DOMAIN
 
     def get_check_types(self) -> list[CheckType]:
         """Return list of check types applicable to this endpoint."""
@@ -133,7 +142,10 @@ class HTTPEndpoint(Endpoint):
     host: str
     port: int
     path: str
-    endpoint_type: EndpointType = EndpointType.HTTP
+
+    def __post_init__(self):
+        """Set endpoint type."""
+        self.endpoint_type = EndpointType.HTTP
 
     @staticmethod
     def from_string(url: str) -> "HTTPEndpoint":
@@ -152,6 +164,7 @@ class HTTPEndpoint(Endpoint):
 
         return HTTPEndpoint(
             raw=url,
+            endpoint_type=EndpointType.HTTP,  # This will be overwritten by __post_init__
             url=url,
             scheme=parsed.scheme,
             host=parsed.hostname or parsed.netloc,
