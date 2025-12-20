@@ -79,17 +79,19 @@ class Dashboard:
 
     def _add_endpoint_row(self, table: Table, endpoint: Endpoint):
         """Add a row for an endpoint to the table."""
-        # Get the most relevant check result for latency display
-        # Priority: HTTP > TCP > DNS > ICMP (most abstract/high-level first)
-        # TCP will show port 80 or 443, whichever succeeded most recently
+        # Get the best (lowest latency) successful check result for latency display
+        # This matches what the graph shows
         latency_result = None
+        best_latency = float("inf")
+
         for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]:
             result = self.orchestrator.get_latest_result(endpoint, check_type)
-            if result and result.success:
-                latency_result = result
-                break
+            if result and result.success and result.latency_ms is not None:
+                if result.latency_ms < best_latency:
+                    best_latency = result.latency_ms
+                    latency_result = result
 
-        # If no successful check, show the highest-level failure
+        # If no successful check, show the highest-priority failure
         if not latency_result:
             for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]:
                 result = self.orchestrator.get_latest_result(endpoint, check_type)
