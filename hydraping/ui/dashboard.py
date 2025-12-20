@@ -145,10 +145,19 @@ class Dashboard:
     def _render_problems(self) -> list[str]:
         """Get list of current problems across all endpoints."""
         problems = []
+        icmp_unavailable_shown = False
+
+        # Check if ICMP is globally unavailable
+        if self.orchestrator.icmp_checker._permission_denied and not icmp_unavailable_shown:
+            problems.append("ICMP unavailable (no permissions) - ping checks disabled")
+            icmp_unavailable_shown = True
+
+        # Add endpoint-specific problems
         for endpoint in self.orchestrator.endpoints:
             endpoint_problems = self.orchestrator.get_problems(endpoint)
             for problem in endpoint_problems:
                 problems.append(f"{endpoint.display_name}: {problem}")
+
         return problems
 
     async def run(self):
