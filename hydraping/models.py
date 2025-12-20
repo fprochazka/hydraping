@@ -47,7 +47,11 @@ class Endpoint:
     """Base class for network endpoints to check."""
 
     raw: str
-    endpoint_type: EndpointType
+
+    def __post_init__(self):
+        """Initialize endpoint type - to be overridden by subclasses."""
+        if not hasattr(self, "endpoint_type"):
+            self.endpoint_type = None
 
     @property
     def display_name(self) -> str:
@@ -164,7 +168,6 @@ class HTTPEndpoint(Endpoint):
 
         return HTTPEndpoint(
             raw=url,
-            endpoint_type=EndpointType.HTTP,  # This will be overwritten by __post_init__
             url=url,
             scheme=parsed.scheme,
             host=parsed.hostname or parsed.netloc,
