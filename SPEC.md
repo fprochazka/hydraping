@@ -51,3 +51,48 @@ Since you mentioned `prettyping`, you likely want a beautiful terminal interface
 ### A "Pro" Tip for your DNS Check
 
 Instead of just checking if `google.com` resolves, your tool could perform a **"DNS Health Check"** by querying multiple DNS providers (like 8.8.8.8 and 1.1.1.1) to see if there is a discrepancy in the results, which is a common cause of "it works on my machine" network issues.
+
+----
+
+When ICMP (ping) is blocked by a firewall, the "equivalent" of `nc -zv <host> <port>` in Python is creating a **socket connection**.
+
+At the system level, `nc` (Netcat) simply attempts a **TCP Three-Way Handshake**. If the handshake completes, the port is "open." If the script receives a `RST` (Reset) or a timeout, the port is "closed" or "filtered."
+
+### The High-Performance Way (Asyncio)
+
+Since you are building a tool for **multiple endpoints**, you shouldn't wait for one connection to timeout before starting the next. Using `asyncio` allows you to probe hundreds of ports simultaneously.
+
+```python
+import asyncio
+
+async def async_nc(host, port, timeout=2):
+    try:
+        # Replicates nc -z functionality
+        conn = asyncio.open_connection(host, port)
+        reader, writer = await asyncio.wait_for(conn, timeout=timeout)
+        writer.close()
+        await writer.wait_closed()
+        return (host, port, "OPEN")
+    except asyncio.TimeoutError:
+        return (host, port, "TIMEOUT")
+    except Exception:
+        return (host, port, "CLOSED")
+
+# Usage: 
+# results = await asyncio.gather(*(async_nc(h, p) for h, p in targets))
+
+```
+
+### Why this works when Ping fails
+
+Firewalls are often configured with "Security through Obscurity" in mind:
+
+* **ICMP (Ping):** Frequently dropped because it’s used for network discovery and "smurf" attacks.
+* **TCP (NC/Socket):** If a server is meant to be a web server (port 80/443) or an SSH server (port 22), the firewall **must** let these TCP packets through, even if it blocks pings.
+
+### Pro-Tip for your Project: "Half-Open" Scanning
+
+If you want to be even more "thorough" (like `nmap`), you can use a library called **Scapy**.
+
+* **Normal Socket:** Completes the handshake (SYN -> SYN-ACK -> ACK).
+* **Scapy (Stealth):** Sends a `SYN`, waits for the `SYN-ACK`, and then immediately sends a `RST` to close the connection before the application even notices you were there.
