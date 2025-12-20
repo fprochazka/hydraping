@@ -45,9 +45,9 @@ class LatencyGraph:
                 # Update overall color (worst color wins)
                 overall_color = self._worst_color(overall_color, color)
             else:
-                # Failed check - use dim dot
-                bars.append("░")
-                overall_color = "dim"
+                # Failed check - use exclamation mark
+                bars.append("!")
+                overall_color = "red"
 
         # Pad with dots on the left to reach fixed width
         graph_str = "░" * (self.width - len(bars)) + "".join(bars)
@@ -88,7 +88,7 @@ class LatencyGraph:
     def _worst_color(color1: str, color2: str) -> str:
         """Return the 'worse' of two colors (for overall graph color)."""
         # Order from best to worst
-        color_priority = ["green", "yellow", "bright_yellow", "red", "dim"]
+        color_priority = ["green", "yellow", "bright_yellow", "red"]
 
         idx1 = color_priority.index(color1) if color1 in color_priority else 0
         idx2 = color_priority.index(color2) if color2 in color_priority else 0
