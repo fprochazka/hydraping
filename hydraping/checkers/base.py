@@ -24,6 +24,8 @@ class BaseChecker(ABC):
         success: bool,
         latency_ms: float | None = None,
         error_message: str | None = None,
+        port: int | None = None,
+        protocol: str | None = None,
     ) -> CheckResult:
         """Helper to create a CheckResult."""
         return CheckResult(
@@ -32,4 +34,6 @@ class BaseChecker(ABC):
             success=success,
             latency_ms=latency_ms,
             error_message=error_message,
+            port=port,
+            protocol=protocol,
         )
