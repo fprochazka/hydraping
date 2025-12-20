@@ -155,13 +155,30 @@ class CheckOrchestrator:
         """Get list of current problems for an endpoint."""
         problems = []
 
-        # Check each check type for failures
-        for check_type in CheckType:
+        # Check hierarchy: HTTP > TCP > DNS > ICMP
+        # If a higher-level check succeeds, suppress lower-level failures
+        check_hierarchy = [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]
+
+        # Find the highest successful check level
+        highest_success_level = -1
+        for i, check_type in enumerate(check_hierarchy):
+            result = self.get_latest_result(endpoint, check_type)
+            if result and result.success:
+                highest_success_level = i
+                break
+
+        # Only report failures for checks at or above the highest success level
+        for i, check_type in enumerate(check_hierarchy):
             result = self.get_latest_result(endpoint, check_type)
             if result and not result.success:
                 # Skip ICMP unavailable errors (system-wide permission issues)
                 if "ICMP unavailable" in result.error_message:
                     continue
+
+                # Skip lower-level failures if a higher-level check succeeded
+                if highest_success_level >= 0 and i > highest_success_level:
+                    continue
+
                 problems.append(f"{check_type.value.upper()}: {result.error_message}")
 
         return problems

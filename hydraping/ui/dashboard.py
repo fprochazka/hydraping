@@ -1,5 +1,7 @@
 """Main terminal UI dashboard for HydraPing."""
 
+from collections import defaultdict
+
 from rich.console import Console, Group
 from rich.live import Live
 from rich.table import Table
@@ -115,7 +117,11 @@ class Dashboard:
                 # Only use checks with successful results
                 successful_history = [r for r in history if r.success]
                 if successful_history:
-                    graph_history = successful_history
+                    # Deduplicate by time interval to handle multiple checks per interval
+                    # (e.g., TCP on ports 80 and 443 both run every interval)
+                    graph_history = self._deduplicate_by_interval(
+                        successful_history, self.orchestrator.config.checks.interval_seconds
+                    )
                     break
 
         if graph_history is None:
@@ -130,6 +136,37 @@ class Dashboard:
             Text(graph_str, style=graph_color),
             Text(latency_str, style=latency_style),
         )
+
+    def _deduplicate_by_interval(self, results: list, interval_seconds: float) -> list:
+        """
+        Deduplicate results by time interval, keeping the best result per interval.
+
+        When multiple checks run in the same interval (e.g., TCP on ports 80 and 443),
+        we only want to show one data point per interval on the graph.
+        """
+        if not results:
+            return []
+
+        # Group results by time bucket
+        buckets = defaultdict(list)
+        interval_ms = interval_seconds * 1000
+
+        for result in results:
+            # Calculate which time bucket this result belongs to
+            timestamp_ms = result.timestamp.timestamp() * 1000
+            bucket = int(timestamp_ms / interval_ms)
+            buckets[bucket].append(result)
+
+        # Take one result per bucket (prefer the one with best/lowest latency)
+        deduplicated = []
+        for bucket_results in buckets.values():
+            # Sort by latency (lowest first) and take the best one
+            best_result = min(bucket_results, key=lambda r: r.latency_ms or float("inf"))
+            deduplicated.append(best_result)
+
+        # Sort by timestamp
+        deduplicated.sort(key=lambda r: r.timestamp)
+        return deduplicated
 
     def _get_latency_color(self, latency_ms: float) -> str:
         """Get color for latency value."""
