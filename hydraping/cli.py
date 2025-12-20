@@ -8,6 +8,7 @@ import typer
 from rich.console import Console
 
 from hydraping.config import Config, create_default_config, get_default_config_path
+from hydraping.models import Endpoint
 from hydraping.orchestrator import CheckOrchestrator
 from hydraping.ui.dashboard import Dashboard
 
@@ -22,8 +23,16 @@ app = typer.Typer(
 console = Console()
 
 
-@app.command()
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
+    endpoints: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help="Endpoints to monitor (overrides config file). "
+            "Examples: 8.8.8.8, 1.1.1.1:53, google.com, https://example.com"
+        ),
+    ] = None,
     config: Annotated[
         Path | None,
         typer.Option(
@@ -35,8 +44,12 @@ def main(
         ),
     ] = None,
 ):
-    """Start monitoring configured endpoints."""
-    # Load configuration
+    """Start monitoring endpoints (default command)."""
+    # If a subcommand is invoked, don't run the main logic
+    if ctx.invoked_subcommand is not None:
+        return
+
+    # Load base configuration
     if config is None:
         config = get_default_config_path()
 
@@ -48,6 +61,14 @@ def main(
     except Exception as e:
         console.print(f"[red]Error loading configuration: {e}[/red]")
         raise typer.Exit(1) from None
+
+    # Override endpoints if provided as arguments
+    if endpoints:
+        try:
+            cfg.endpoints = [Endpoint.parse(ep) for ep in endpoints]
+        except Exception as e:
+            console.print(f"[red]Error parsing endpoint: {e}[/red]")
+            raise typer.Exit(1) from None
 
     # Create orchestrator and dashboard
     orchestrator = CheckOrchestrator(cfg)

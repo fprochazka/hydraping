@@ -1,7 +1,5 @@
 """Main terminal UI dashboard for HydraPing."""
 
-from collections import defaultdict
-
 from rich.console import Console, Group
 from rich.live import Live
 from rich.table import Table
@@ -152,25 +150,26 @@ class Dashboard:
         if not results:
             return []
 
-        # Group results by time bucket
-        buckets = defaultdict(list)
-        interval_ms = interval_seconds * 1000
+        # Group results by time bucket (use interval in seconds for consistent bucketing)
+        buckets = {}
 
         for result in results:
             # Calculate which time bucket this result belongs to
-            timestamp_ms = result.timestamp.timestamp() * 1000
-            bucket = int(timestamp_ms / interval_ms)
-            buckets[bucket].append(result)
+            # Use floor division to get consistent buckets aligned to interval
+            timestamp_s = result.timestamp.timestamp()
+            bucket = int(timestamp_s / interval_seconds)
 
-        # Take one result per bucket (prefer the one with best/lowest latency)
-        deduplicated = []
-        for bucket_results in buckets.values():
-            # Sort by latency (lowest first) and take the best one
-            best_result = min(bucket_results, key=lambda r: r.latency_ms or float("inf"))
-            deduplicated.append(best_result)
+            # Keep only the best (lowest latency) result per bucket
+            if bucket not in buckets:
+                buckets[bucket] = result
+            else:
+                current_latency = buckets[bucket].latency_ms or float("inf")
+                new_latency = result.latency_ms or float("inf")
+                if new_latency < current_latency:
+                    buckets[bucket] = result
 
-        # Sort by timestamp
-        deduplicated.sort(key=lambda r: r.timestamp)
+        # Sort by bucket number (chronological order)
+        deduplicated = [buckets[k] for k in sorted(buckets.keys())]
         return deduplicated
 
     def _get_latency_color(self, latency_ms: float) -> str:
@@ -204,21 +203,24 @@ class Dashboard:
 
     async def run(self):
         """Run the live dashboard."""
-        with Live(self.render(), console=self.console, refresh_per_second=4, screen=False) as live:
-            # Set up callback to update display when results come in
-            def on_result(endpoint: Endpoint, result):
-                live.update(self.render())
+        # Set up callback to update display when results come in
+        live = Live(self.render(), console=self.console, refresh_per_second=4, screen=False)
 
-            self.orchestrator.on_result = on_result
+        def on_result(endpoint: Endpoint, result):
+            live.update(self.render())
 
-            # Start orchestrator
-            await self.orchestrator.start()
+        self.orchestrator.on_result = on_result
 
-            # Keep running until interrupted
-            try:
-                while True:
-                    await self.orchestrator._task
-            except KeyboardInterrupt:
-                pass
-            finally:
-                await self.orchestrator.stop()
+        # Start orchestrator and live display
+        live.start()
+        await self.orchestrator.start()
+
+        # Keep running until interrupted
+        try:
+            while True:
+                await self.orchestrator._task
+        except KeyboardInterrupt:
+            pass
+        finally:
+            await self.orchestrator.stop()
+            live.stop()
