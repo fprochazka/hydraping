@@ -1,6 +1,6 @@
 """Main terminal UI dashboard for HydraPing."""
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.table import Table
 from rich.text import Text
@@ -47,8 +47,8 @@ class Dashboard:
         # Ensure minimum width
         self.graph_width = max(self.graph_width, 20)
 
-    def render(self) -> Table:
-        """Render the current state as a Rich table."""
+    def render(self) -> Group:
+        """Render the current state as a Rich group."""
         table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
 
         # Add columns with fixed widths
@@ -60,18 +60,17 @@ class Dashboard:
         for endpoint in self.orchestrator.endpoints:
             self._add_endpoint_row(table, endpoint)
 
-        # Add problems section if any
+        # Build problems section
         problems_text = self._render_problems()
-        if problems_text:
-            # Add empty row for spacing
-            table.add_row("", "", "")
-            # Add problems header
-            table.add_row(Text("Problems:", style="bold red"), "", "")
-            # Add each problem
-            for problem in problems_text:
-                table.add_row(Text(f"  • {problem}", style="red"), "", "")
+        renderables = [table]
 
-        return table
+        if problems_text:
+            renderables.append(Text())  # Empty line
+            renderables.append(Text("Problems:", style="bold red"))
+            for problem in problems_text:
+                renderables.append(Text(f"  • {problem}", style="red"))
+
+        return Group(*renderables)
 
     def _add_endpoint_row(self, table: Table, endpoint: Endpoint):
         """Add a row for an endpoint to the table."""
@@ -80,7 +79,7 @@ class Dashboard:
         latency_result = None
         for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.ICMP, CheckType.DNS]:
             result = self.orchestrator.get_latest_result(endpoint, check_type)
-            if result:
+            if result and (result.success or "unavailable" not in result.error_message):
                 latency_result = result
                 break
 
@@ -95,11 +94,25 @@ class Dashboard:
             latency_str = "-"
             latency_style = "dim"
 
-        # Get graph - for now just use ICMP results for graph
-        # (We could aggregate multiple check types later)
-        icmp_history = self.orchestrator.get_history(endpoint, CheckType.ICMP)
+        # Get graph - use best available check type
+        # Priority: ICMP > DNS > TCP > HTTP
+        graph_history = None
+        for check_type in [CheckType.ICMP, CheckType.DNS, CheckType.TCP, CheckType.HTTP]:
+            history = self.orchestrator.get_history(endpoint, check_type)
+            if history:
+                # Filter out "unavailable" errors
+                valid_history = [
+                    r for r in history if r.success or "unavailable" not in r.error_message
+                ]
+                if valid_history:
+                    graph_history = valid_history
+                    break
+
+        if graph_history is None:
+            graph_history = []
+
         graph_renderer = self.graphs[endpoint.raw]
-        graph_str, graph_color = graph_renderer.render(icmp_history)
+        graph_str, graph_color = graph_renderer.render(graph_history)
 
         # Add row
         table.add_row(

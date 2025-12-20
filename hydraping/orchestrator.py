@@ -160,6 +160,9 @@ class CheckOrchestrator:
         for check_type in CheckType:
             result = self.get_latest_result(endpoint, check_type)
             if result and not result.success:
+                # Skip ICMP unavailable errors (system-wide permission issues)
+                if "ICMP unavailable" in result.error_message:
+                    continue
                 problems.append(f"{check_type.value.upper()}: {result.error_message}")
 
         return problems
