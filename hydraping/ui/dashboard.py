@@ -94,7 +94,13 @@ class Dashboard:
 
         # Format latency with check type indicator
         if latency_result and latency_result.success and latency_result.latency_ms is not None:
+            # Build check label with port/protocol info
             check_label = latency_result.check_type.value.upper()
+            if latency_result.check_type == CheckType.TCP and latency_result.port:
+                check_label = f"TCP:{latency_result.port}"
+            elif latency_result.check_type == CheckType.HTTP and latency_result.protocol:
+                check_label = latency_result.protocol.upper()
+
             latency_str = f"{latency_result.latency_ms:.1f}ms ({check_label})"
             latency_style = self._get_latency_color(latency_result.latency_ms)
         elif latency_result and not latency_result.success:
@@ -204,7 +210,12 @@ class Dashboard:
     async def run(self):
         """Run the live dashboard."""
         # Set up callback to update display when results come in
-        live = Live(self.render(), console=self.console, refresh_per_second=4, screen=False)
+        live = Live(
+            self.render(),
+            console=self.console,
+            refresh_per_second=4,
+            screen=False,
+        )
 
         def on_result(endpoint: Endpoint, result):
             live.update(self.render())
@@ -220,7 +231,10 @@ class Dashboard:
             while True:
                 await self.orchestrator._task
         except KeyboardInterrupt:
+            # Suppress KeyboardInterrupt output
             pass
         finally:
             await self.orchestrator.stop()
             live.stop()
+            # Print newline to leave cursor on clean line
+            self.console.print()

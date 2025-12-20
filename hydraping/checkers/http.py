@@ -13,6 +13,9 @@ class HTTPChecker(BaseChecker):
 
     async def check(self, url: str) -> CheckResult:
         """Perform HTTP request check."""
+        # Determine protocol from URL
+        protocol = "https" if url.startswith("https://") else "http"
+
         try:
             # Measure request time
             start_time = time.perf_counter()
@@ -32,6 +35,7 @@ class HTTPChecker(BaseChecker):
                             check_type=CheckType.HTTP,
                             success=True,
                             latency_ms=latency_ms,
+                            protocol=protocol,
                         )
                     else:
                         return self._create_result(

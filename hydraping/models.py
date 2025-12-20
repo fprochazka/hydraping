@@ -33,6 +33,8 @@ class CheckResult:
     success: bool
     latency_ms: float | None = None
     error_message: str | None = None
+    port: int | None = None  # For TCP checks
+    protocol: str | None = None  # For HTTP checks (http/https)
 
     def __post_init__(self):
         """Validate the check result."""

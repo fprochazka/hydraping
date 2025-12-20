@@ -29,7 +29,7 @@ class TCPChecker(BaseChecker):
             await writer.wait_closed()
 
             return self._create_result(
-                check_type=CheckType.TCP, success=True, latency_ms=latency_ms
+                check_type=CheckType.TCP, success=True, latency_ms=latency_ms, port=port
             )
 
         except TimeoutError:
