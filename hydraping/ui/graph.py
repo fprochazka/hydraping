@@ -45,11 +45,18 @@ class LatencyGraph:
         end_bucket = current_bucket + 1
 
         # Create a dict of results by bucket number
+        # Need to convert result timestamps to bucket numbers relative to start_time
         results_by_bucket = {}
+
+        # Get the Unix timestamp of start_time for conversion
+        start_timestamp = time.time() - (now - start_time)
+
         for result in results:
             timestamp_s = result.timestamp.timestamp()
-            # Convert to monotonic time approximation (may have slight drift)
-            bucket = int(timestamp_s / interval_seconds)
+            # Calculate bucket relative to start_time
+            elapsed_since_start = timestamp_s - start_timestamp
+            bucket = int(elapsed_since_start / interval_seconds)
+
             # Keep best result per bucket
             if bucket not in results_by_bucket:
                 results_by_bucket[bucket] = result
