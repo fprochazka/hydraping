@@ -38,17 +38,25 @@ class EndpointResultHistory:
     This ensures all consumers (graph, dashboard, etc.) see consistent data.
     """
 
-    def __init__(self, interval_seconds: float, max_capacity: int = 2400):
+    def __init__(
+        self,
+        interval_seconds: float,
+        max_capacity: int = 2400,
+        start_time: float | None = None,
+        start_timestamp: float | None = None,
+    ):
         """Initialize result history.
 
         Args:
             interval_seconds: Time interval for bucketing results
             max_capacity: Maximum number of results to keep in history
+            start_time: Optional shared monotonic time (synchronizes endpoint buckets)
+            start_timestamp: Optional shared wall-clock time (synchronizes endpoint buckets)
         """
         self.interval_seconds = interval_seconds
         self.results: deque[CheckResult] = deque(maxlen=max_capacity)
-        self.start_time: float | None = None  # Monotonic time for bucket calculation
-        self.start_timestamp: float | None = None  # Wall-clock time for result bucketing
+        self.start_time = start_time  # Monotonic time for bucket calculation
+        self.start_timestamp = start_timestamp  # Wall-clock time for result bucketing
         self._priority_order = {check_type: i for i, check_type in enumerate(CHECK_TYPE_PRIORITY)}
 
     def add_result(self, result: "CheckResult") -> None:

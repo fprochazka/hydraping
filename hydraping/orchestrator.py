@@ -47,6 +47,11 @@ class CheckOrchestrator:
         self.history_capacity = MAX_GRAPH_WIDTH * 4 * 2
         self.history: dict[str, EndpointResultHistory] = {}
 
+        # Shared time references for all endpoints (set when orchestrator starts)
+        # This ensures all endpoints use the same bucket numbering
+        self.start_time: float | None = None  # Monotonic time for bucket calculation
+        self.start_timestamp: float | None = None  # Wall-clock time for result bucketing
+
         # Control flags
         self._running = False
         self._task: asyncio.Task | None = None
@@ -72,7 +77,12 @@ class CheckOrchestrator:
     async def _run_loop(self):
         """Main loop that runs checks at configured interval."""
         interval = self.config.checks.interval_seconds
-        start_time = time.monotonic()
+
+        # Set shared start times for all endpoints
+        self.start_time = time.monotonic()
+        self.start_timestamp = time.time()
+        start_time = self.start_time  # Local variable for loop timing
+
         iteration = 0
 
         while self._running:
@@ -146,6 +156,8 @@ class CheckOrchestrator:
             self.history[endpoint.raw] = EndpointResultHistory(
                 interval_seconds=self.config.checks.interval_seconds,
                 max_capacity=self.history_capacity,
+                start_time=self.start_time,
+                start_timestamp=self.start_timestamp,
             )
         self.history[endpoint.raw].add_result(result)
 
