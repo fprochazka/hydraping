@@ -51,11 +51,14 @@ class Dashboard:
         # Protocol column: fixed width for "(TCP:443)" (10 chars)
         self.protocol_width = 10
 
-        # Spacing between columns (2 spaces between each)
-        spacing = 6  # 2 spaces * 3 gaps (endpoint-graph, graph-time, time-protocol)
+        # Table padding: padding=(0, 1) means 1 space on each side of each cell
+        # With 4 columns: 4 columns * 2 sides * 1 space = 8 spaces total
+        table_padding = 8
 
         # Graph column: remaining space
-        total_fixed = self.endpoint_width + self.latency_time_width + self.protocol_width + spacing
+        total_fixed = (
+            self.endpoint_width + self.latency_time_width + self.protocol_width + table_padding
+        )
         self.graph_width = terminal_width - total_fixed
         # Ensure minimum width
         self.graph_width = max(self.graph_width, 20)
