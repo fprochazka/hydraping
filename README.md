@@ -8,6 +8,13 @@ Multi-protocol connection tester with live terminal UI - Because it has many "he
 - **Live terminal UI**: Real-time updating display with latency graphs
 - **Flexible endpoint support**: Check IPs, domains, ports, and HTTP endpoints
 - **Configuration file**: Store your endpoints in `~/.config/hydraping/settings.toml`
+- **Async architecture**: Efficiently monitors multiple endpoints concurrently
+- **Smart error handling**: Only shows relevant problems based on check hierarchy
+
+## Requirements
+
+- Python 3.11+
+- **ICMP (ping) checks**: Require root/CAP_NET_RAW privileges on Linux. If not available, ping checks will be automatically disabled with a warning.
 
 ## Installation
 
@@ -62,7 +69,7 @@ The display shows:
 - **Current latency** - Latest measurement with check type (ICMP/DNS/TCP/HTTP)
 - **Problems** - Only relevant issues (smart filtering based on check hierarchy)
 
-Graph colors: 🟢 Green (<50ms) · 🟡 Yellow (<150ms) · 🟠 Orange (<300ms) · 🔴 Red (>300ms)
+Graph colors: 🟢 Green (<50ms) · 🟡 Yellow (50-100ms) · 🟠 Orange (100-200ms) · 🔴 Red (>200ms)
 
 ## Configuration
 
@@ -106,6 +113,31 @@ source .venv/bin/activate && ruff check --fix . && ruff format .
 # Run tests
 pytest
 ```
+
+## How It Works
+
+### Check Hierarchy
+
+For each endpoint, HydraPing runs applicable checks based on the endpoint type:
+
+- **IP addresses** (`8.8.8.8`): ICMP only
+- **IP:port** (`1.1.1.1:53`): ICMP + TCP
+- **Domains** (`google.com`): DNS + ICMP + TCP (ports 80 and 443)
+- **HTTP/HTTPS URLs**: DNS + ICMP + TCP + HTTP request
+
+The dashboard displays the highest-priority successful check result. If a higher-level check succeeds (e.g., HTTP), lower-level failures (e.g., ICMP) are suppressed to reduce noise.
+
+### Architecture
+
+- **Async-first design**: Uses `asyncio` to run multiple checks concurrently without blocking
+- **Built with**:
+  - `icmplib` - Async ICMP ping
+  - `dnspython` - DNS resolution
+  - `aiohttp` - Async HTTP requests
+  - `Rich` - Terminal UI rendering
+  - `Typer` - CLI framework
+- **Time bucketing**: Results are bucketed by check interval for smooth graph scrolling
+- **Smart filtering**: Only shows meaningful errors based on what checks succeeded
 
 ## License
 
