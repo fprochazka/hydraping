@@ -174,8 +174,8 @@ class Dashboard:
     async def run(self):
         """Run the live dashboard."""
         # Set up live display with automatic refresh
-        # Note: We rely on refresh_per_second for updates to avoid race conditions
-        # from concurrent check results calling live.update() simultaneously
+        # We update the display in the main loop to avoid race conditions
+        # from concurrent check results updating simultaneously
         live = Live(
             self.render(),
             console=self.console,
@@ -187,12 +187,14 @@ class Dashboard:
         live.start()
         await self.orchestrator.start()
 
-        # Keep running until interrupted
+        # Keep running and update display periodically
         try:
             import asyncio
 
             while True:
-                await asyncio.sleep(1)
+                # Update the display with fresh data
+                live.update(self.render())
+                await asyncio.sleep(0.25)  # Update 4 times per second
         except KeyboardInterrupt:
             # Suppress KeyboardInterrupt output
             pass
