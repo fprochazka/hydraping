@@ -22,18 +22,32 @@ class BaseChecker(ABC):
         self,
         check_type: CheckType,
         success: bool,
+        timestamp: datetime,
         latency_ms: float | None = None,
         error_message: str | None = None,
         port: int | None = None,
         protocol: str | None = None,
     ) -> CheckResult:
-        """Helper to create a CheckResult."""
+        """Helper to create a CheckResult.
+
+        Args:
+            check_type: Type of check performed
+            success: Whether the check succeeded
+            timestamp: Timestamp for this result (from iteration, not check completion time)
+            latency_ms: Latency in milliseconds if successful
+            error_message: Error message if failed
+            port: Port number for TCP checks
+            protocol: Protocol for HTTP checks
+
+        Returns:
+            CheckResult with the provided values
+        """
         # Ensure latency is non-negative (protect against clock issues)
         if latency_ms is not None and latency_ms < 0:
             latency_ms = 0.0
 
         return CheckResult(
-            timestamp=datetime.now(),
+            timestamp=timestamp,
             check_type=check_type,
             success=success,
             latency_ms=latency_ms,

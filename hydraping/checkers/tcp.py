@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from datetime import datetime
 
 from hydraping.checkers.base import BaseChecker
 from hydraping.models import CheckResult, CheckType
@@ -10,7 +11,7 @@ from hydraping.models import CheckResult, CheckType
 class TCPChecker(BaseChecker):
     """Checker for TCP port connectivity."""
 
-    async def check(self, host: str, port: int) -> CheckResult:
+    async def check(self, host: str, port: int, iteration_timestamp: datetime) -> CheckResult:
         """Perform TCP connection check."""
         try:
             # Measure connection time
@@ -29,13 +30,18 @@ class TCPChecker(BaseChecker):
             await writer.wait_closed()
 
             return self._create_result(
-                check_type=CheckType.TCP, success=True, latency_ms=latency_ms, port=port
+                check_type=CheckType.TCP,
+                success=True,
+                timestamp=iteration_timestamp,
+                latency_ms=latency_ms,
+                port=port,
             )
 
         except TimeoutError:
             return self._create_result(
                 check_type=CheckType.TCP,
                 success=False,
+                timestamp=iteration_timestamp,
                 error_message=f"Connection timeout (>{self.timeout}s)",
                 port=port,
             )
@@ -43,6 +49,7 @@ class TCPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.TCP,
                 success=False,
+                timestamp=iteration_timestamp,
                 error_message=f"Connection refused on port {port}",
                 port=port,
             )
@@ -50,6 +57,7 @@ class TCPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.TCP,
                 success=False,
+                timestamp=iteration_timestamp,
                 error_message=f"Network error: {e}",
                 port=port,
             )
@@ -57,6 +65,7 @@ class TCPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.TCP,
                 success=False,
+                timestamp=iteration_timestamp,
                 error_message=f"TCP error: {e}",
                 port=port,
             )

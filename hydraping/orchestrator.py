@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from datetime import datetime
 
 from hydraping.checkers.dns import DNSChecker
 from hydraping.checkers.http import HTTPChecker
@@ -94,59 +95,75 @@ class CheckOrchestrator:
             if now < target_time:
                 await asyncio.sleep(target_time - now)
 
+            # Capture iteration timestamp once for all checks
+            # This ensures all results from this iteration land in the same bucket
+            iteration_timestamp = datetime.now()
+
             # Run checks for all endpoints concurrently
-            tasks = [self._check_endpoint(endpoint) for endpoint in self.endpoints]
+            tasks = [
+                self._check_endpoint(endpoint, iteration_timestamp) for endpoint in self.endpoints
+            ]
             await asyncio.gather(*tasks, return_exceptions=True)
 
             iteration += 1
 
-    async def _check_endpoint(self, endpoint: Endpoint):
+    async def _check_endpoint(self, endpoint: Endpoint, iteration_timestamp: datetime):
         """Run all applicable checks for a single endpoint."""
         # Determine which checks to run based on endpoint type
         check_tasks = []
 
         if isinstance(endpoint, IPEndpoint):
-            check_tasks.append(self._check_icmp(endpoint, endpoint.ip))
+            check_tasks.append(self._check_icmp(endpoint, endpoint.ip, iteration_timestamp))
 
         elif isinstance(endpoint, IPPortEndpoint):
-            check_tasks.append(self._check_icmp(endpoint, endpoint.ip))
-            check_tasks.append(self._check_tcp(endpoint, endpoint.ip, endpoint.port))
+            check_tasks.append(self._check_icmp(endpoint, endpoint.ip, iteration_timestamp))
+            check_tasks.append(
+                self._check_tcp(endpoint, endpoint.ip, endpoint.port, iteration_timestamp)
+            )
 
         elif isinstance(endpoint, DomainEndpoint):
             # For domain: DNS, ICMP, and TCP checks (try both HTTP and HTTPS ports)
-            check_tasks.append(self._check_dns(endpoint, endpoint.domain))
-            check_tasks.append(self._check_icmp(endpoint, endpoint.domain))
-            check_tasks.append(self._check_tcp(endpoint, endpoint.domain, 80))  # HTTP
-            check_tasks.append(self._check_tcp(endpoint, endpoint.domain, 443))  # HTTPS
+            check_tasks.append(self._check_dns(endpoint, endpoint.domain, iteration_timestamp))
+            check_tasks.append(self._check_icmp(endpoint, endpoint.domain, iteration_timestamp))
+            check_tasks.append(
+                self._check_tcp(endpoint, endpoint.domain, 80, iteration_timestamp)
+            )  # HTTP
+            check_tasks.append(
+                self._check_tcp(endpoint, endpoint.domain, 443, iteration_timestamp)
+            )  # HTTPS
 
         elif isinstance(endpoint, HTTPEndpoint):
             # For HTTP endpoint, run DNS, ICMP, TCP, and HTTP
-            check_tasks.append(self._check_dns(endpoint, endpoint.host))
-            check_tasks.append(self._check_icmp(endpoint, endpoint.host))
-            check_tasks.append(self._check_tcp(endpoint, endpoint.host, endpoint.port))
-            check_tasks.append(self._check_http(endpoint, endpoint.url))
+            check_tasks.append(self._check_dns(endpoint, endpoint.host, iteration_timestamp))
+            check_tasks.append(self._check_icmp(endpoint, endpoint.host, iteration_timestamp))
+            check_tasks.append(
+                self._check_tcp(endpoint, endpoint.host, endpoint.port, iteration_timestamp)
+            )
+            check_tasks.append(self._check_http(endpoint, endpoint.url, iteration_timestamp))
 
         # Run all checks concurrently
         await asyncio.gather(*check_tasks, return_exceptions=True)
 
-    async def _check_icmp(self, endpoint: Endpoint, target: str):
+    async def _check_icmp(self, endpoint: Endpoint, target: str, iteration_timestamp: datetime):
         """Run ICMP check and store result."""
-        result = await self.icmp_checker.check(target)
+        result = await self.icmp_checker.check(target, iteration_timestamp)
         self._store_result(endpoint, result)
 
-    async def _check_dns(self, endpoint: Endpoint, target: str):
+    async def _check_dns(self, endpoint: Endpoint, target: str, iteration_timestamp: datetime):
         """Run DNS check and store result."""
-        result = await self.dns_checker.check(target)
+        result = await self.dns_checker.check(target, iteration_timestamp)
         self._store_result(endpoint, result)
 
-    async def _check_tcp(self, endpoint: Endpoint, host: str, port: int):
+    async def _check_tcp(
+        self, endpoint: Endpoint, host: str, port: int, iteration_timestamp: datetime
+    ):
         """Run TCP check and store result."""
-        result = await self.tcp_checker.check(host, port)
+        result = await self.tcp_checker.check(host, port, iteration_timestamp)
         self._store_result(endpoint, result)
 
-    async def _check_http(self, endpoint: Endpoint, url: str):
+    async def _check_http(self, endpoint: Endpoint, url: str, iteration_timestamp: datetime):
         """Run HTTP check and store result."""
-        result = await self.http_checker.check(url)
+        result = await self.http_checker.check(url, iteration_timestamp)
         self._store_result(endpoint, result)
 
     def _store_result(self, endpoint: Endpoint, result: CheckResult):

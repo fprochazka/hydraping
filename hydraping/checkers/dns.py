@@ -1,6 +1,7 @@
 """DNS resolver checker."""
 
 import time
+from datetime import datetime
 
 import dns.asyncresolver
 import dns.exception
@@ -18,7 +19,7 @@ class DNSChecker(BaseChecker):
         super().__init__(timeout)
         self.nameservers = nameservers
 
-    async def check(self, target: str) -> CheckResult:
+    async def check(self, target: str, iteration_timestamp: datetime) -> CheckResult:
         """Perform DNS resolution check."""
         try:
             resolver = dns.asyncresolver.Resolver()
@@ -45,6 +46,7 @@ class DNSChecker(BaseChecker):
                 return self._create_result(
                     check_type=CheckType.DNS,
                     success=False,
+                    timestamp=iteration_timestamp,
                     error_message="No A or AAAA records returned",
                 )
 
@@ -53,6 +55,7 @@ class DNSChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.DNS,
                 success=True,
+                timestamp=iteration_timestamp,
                 latency_ms=latency_ms,
             )
 
@@ -60,29 +63,34 @@ class DNSChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.DNS,
                 success=False,
+                timestamp=iteration_timestamp,
                 error_message="Domain does not exist (NXDOMAIN)",
             )
         except dns.resolver.Timeout:
             return self._create_result(
                 check_type=CheckType.DNS,
                 success=False,
+                timestamp=iteration_timestamp,
                 error_message=f"DNS query timeout (>{self.timeout}s)",
             )
         except dns.resolver.NoAnswer:
             return self._create_result(
                 check_type=CheckType.DNS,
                 success=False,
+                timestamp=iteration_timestamp,
                 error_message="No DNS answer received",
             )
         except dns.resolver.NoNameservers:
             return self._create_result(
                 check_type=CheckType.DNS,
                 success=False,
+                timestamp=iteration_timestamp,
                 error_message="No nameservers available",
             )
         except Exception as e:
             return self._create_result(
                 check_type=CheckType.DNS,
                 success=False,
+                timestamp=iteration_timestamp,
                 error_message=f"DNS error: {e}",
             )
