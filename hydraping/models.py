@@ -176,6 +176,11 @@ class EndpointResultHistory:
         for bucket_num in range(start_bucket, end_bucket):
             result_list.append(results_by_bucket.get(bucket_num))
 
+        # Ensure the list is exactly num_buckets long by padding with None on the left
+        # This happens when we're early in monitoring (current_bucket < num_buckets - 1)
+        while len(result_list) < num_buckets:
+            result_list.insert(0, None)
+
         return result_list
 
     def get_latest_by_type(self, check_type: "CheckType") -> "CheckResult | None":
