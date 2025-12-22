@@ -91,25 +91,22 @@ class Dashboard:
 
     def _add_endpoint_row(self, table: Table, endpoint: Endpoint):
         """Add a row for an endpoint to the table."""
-        # Get the highest-priority successful check result for latency display
-        # Priority: HTTP > TCP > DNS > ICMP (show the most comprehensive check)
-        latency_result = None
+        # Get all check results for this endpoint (both success and failure)
+        # The graph renderer will handle bucketing and priority selection
+        all_results = []
         for check_type in CHECK_TYPE_PRIORITY:
-            result = self.orchestrator.get_latest_result(endpoint, check_type)
-            if result and result.success and result.latency_ms is not None:
-                latency_result = result
-                break
+            history = self.orchestrator.get_history(endpoint, check_type)
+            if history:
+                all_results.extend(history)
 
-        # If no successful check, show the highest-priority failure
-        if not latency_result:
-            for check_type in CHECK_TYPE_PRIORITY:
-                result = self.orchestrator.get_latest_result(endpoint, check_type)
-                # Skip "unavailable" errors (like ICMP permission issues)
-                if result and (
-                    not result.error_message or "unavailable" not in result.error_message
-                ):
-                    latency_result = result
-                    break
+        # Get the result currently displayed in the graph's rightmost position
+        # This ensures latency/protocol display matches what the graph shows
+        latency_result = LatencyGraph.get_current_result(
+            all_results,
+            self.orchestrator.start_time,
+            self.orchestrator.start_timestamp,
+            self.orchestrator.config.checks.interval_seconds,
+        )
 
         # Format latency time and protocol separately
         if latency_result and latency_result.success and latency_result.latency_ms is not None:
@@ -133,14 +130,7 @@ class Dashboard:
             protocol_str = ""
             latency_style = "dim"
 
-        # Get all check results for this endpoint (both success and failure)
-        # The graph renderer will handle bucketing and priority selection
-        all_results = []
-        for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]:
-            history = self.orchestrator.get_history(endpoint, check_type)
-            if history:
-                all_results.extend(history)
-
+        # Render the graph
         graph_renderer = self.graphs[endpoint.raw]
         graph_text = graph_renderer.render(
             all_results,

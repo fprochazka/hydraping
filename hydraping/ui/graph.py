@@ -27,6 +27,74 @@ class LatencyGraph:
         """Initialize graph with fixed width."""
         self.width = width
 
+    @staticmethod
+    def get_current_result(
+        results: list[CheckResult],
+        start_time: float | None,
+        start_timestamp: float | None,
+        interval_seconds: float,
+    ) -> CheckResult | None:
+        """
+        Get the result currently displayed in the graph's rightmost position.
+
+        This uses the same bucketing and priority logic as render() to determine
+        which check result is actually being shown in the last graph position.
+
+        Args:
+            results: List of check results
+            start_time: Monotonic time when checks started
+            start_timestamp: Wall-clock time when checks started
+            interval_seconds: Check interval in seconds
+
+        Returns:
+            The CheckResult being displayed, or None if no data yet
+        """
+        if start_time is None or start_timestamp is None or not results:
+            return None
+
+        from hydraping.models import CHECK_TYPE_PRIORITY
+
+        priority_order = {check_type: i for i, check_type in enumerate(CHECK_TYPE_PRIORITY)}
+
+        # Calculate current time bucket
+        now = time.monotonic()
+        elapsed = now - start_time
+        current_bucket = int(elapsed / interval_seconds)
+
+        # Find all results in the current bucket
+        current_bucket_result = None
+
+        for result in results:
+            timestamp_s = result.timestamp.timestamp()
+            elapsed_since_start = timestamp_s - start_timestamp
+            bucket = int(elapsed_since_start / interval_seconds)
+
+            # Only consider results in the current bucket
+            if bucket != current_bucket:
+                continue
+
+            # Keep highest-priority result (same logic as render())
+            if current_bucket_result is None:
+                current_bucket_result = result
+            else:
+                current_priority = priority_order.get(current_bucket_result.check_type, 999)
+                new_priority = priority_order.get(result.check_type, 999)
+
+                # Replace if new is better: success over failure, or same state + higher priority
+                should_replace = False
+                if result.success and not current_bucket_result.success:
+                    should_replace = True
+                elif (
+                    result.success == current_bucket_result.success
+                    and new_priority < current_priority
+                ):
+                    should_replace = True
+
+                if should_replace:
+                    current_bucket_result = result
+
+        return current_bucket_result
+
     def render(
         self,
         results: list[CheckResult],
