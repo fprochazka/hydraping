@@ -66,7 +66,7 @@ class Dashboard:
 
         # Add columns with fixed widths
         table.add_column("Endpoint", width=self.endpoint_width, no_wrap=True)
-        table.add_column("Graph", width=self.graph_width, no_wrap=True, overflow="crop")
+        table.add_column("Graph", width=self.graph_width, no_wrap=True)
         table.add_column("Time", width=self.latency_time_width, justify="right", no_wrap=True)
         table.add_column("Protocol", width=self.protocol_width, justify="left", no_wrap=True)
 

@@ -16,10 +16,9 @@ from hydraping.ui.constants import (
 class LatencyGraph:
     """Renders latency history as a graph."""
 
-    # Single-width ASCII characters for graph bars (from empty to full)
-    # Using only ASCII characters that are guaranteed to be exactly 1 cell wide
-    BLOCKS = [".", "_", "-", "=", "+", "*", "#", "@", "M"]
-    EMPTY_CHAR = "."  # Character for empty/padding areas
+    # Unicode block characters for graph bars (from empty to full)
+    BLOCKS = ["·", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
+    EMPTY_CHAR = "·"  # Character for empty/padding areas
 
     # Latency thresholds for height calculation (in ms)
     MAX_LATENCY_FOR_GRAPH = 500.0  # Anything above this is max height
