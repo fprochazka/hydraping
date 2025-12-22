@@ -1,6 +1,8 @@
 """Core data models for HydraPing."""
 
 import ipaddress
+import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -22,6 +24,183 @@ class CheckType(str, Enum):
 # DNS verifies name resolution only
 # ICMP is the basic network layer check
 CHECK_TYPE_PRIORITY = [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]
+
+
+class EndpointResultHistory:
+    """Manages time-bucketed check results for a single endpoint.
+
+    This class encapsulates all logic for:
+    - Storing check results in time-ordered fashion
+    - Bucketing results by time intervals
+    - Selecting highest-priority result per bucket
+    - Understanding check type hierarchy
+
+    This ensures all consumers (graph, dashboard, etc.) see consistent data.
+    """
+
+    def __init__(self, interval_seconds: float, max_capacity: int = 2400):
+        """Initialize result history.
+
+        Args:
+            interval_seconds: Time interval for bucketing results
+            max_capacity: Maximum number of results to keep in history
+        """
+        self.interval_seconds = interval_seconds
+        self.results: deque[CheckResult] = deque(maxlen=max_capacity)
+        self.start_time: float | None = None  # Monotonic time for bucket calculation
+        self.start_timestamp: float | None = None  # Wall-clock time for result bucketing
+        self._priority_order = {check_type: i for i, check_type in enumerate(CHECK_TYPE_PRIORITY)}
+
+    def add_result(self, result: "CheckResult") -> None:
+        """Add a new check result.
+
+        Args:
+            result: The check result to add
+        """
+        if self.start_time is None:
+            self.start_time = time.monotonic()
+            self.start_timestamp = result.timestamp.timestamp()
+        self.results.append(result)
+
+    def get_current_result(self) -> "CheckResult | None":
+        """Get the result for the current time bucket.
+
+        This is what should be displayed "now" - the highest-priority result
+        in the current time bucket. Uses check type hierarchy to select the
+        best result when multiple checks completed in the same bucket.
+
+        Returns:
+            The current result to display, or None if no data yet
+        """
+        if self.start_time is None or self.start_timestamp is None or not self.results:
+            return None
+
+        # Calculate current time bucket
+        now = time.monotonic()
+        elapsed = now - self.start_time
+        current_bucket = int(elapsed / self.interval_seconds)
+
+        # Find highest-priority result in current bucket
+        current_bucket_result = None
+
+        for result in self.results:
+            timestamp_s = result.timestamp.timestamp()
+            elapsed_since_start = timestamp_s - self.start_timestamp
+            bucket = int(elapsed_since_start / self.interval_seconds)
+
+            # Only consider results in the current bucket
+            if bucket != current_bucket:
+                continue
+
+            # Keep highest-priority result
+            if current_bucket_result is None:
+                current_bucket_result = result
+            else:
+                current_bucket_result = self._select_better_result(current_bucket_result, result)
+
+        return current_bucket_result
+
+    def get_bucketed_results(self, num_buckets: int) -> dict[int, "CheckResult"]:
+        """Get bucketed results for the last N time buckets.
+
+        Each bucket contains the highest-priority result that completed
+        during that time interval.
+
+        Args:
+            num_buckets: Number of recent buckets to return
+
+        Returns:
+            Dictionary mapping bucket number to CheckResult
+        """
+        if self.start_time is None or self.start_timestamp is None:
+            return {}
+
+        # Calculate current bucket range
+        now = time.monotonic()
+        elapsed = now - self.start_time
+        current_bucket = int(elapsed / self.interval_seconds)
+        start_bucket = max(0, current_bucket - num_buckets + 1)
+        end_bucket = current_bucket + 1
+
+        # Build bucketed results
+        results_by_bucket = {}
+
+        for result in self.results:
+            timestamp_s = result.timestamp.timestamp()
+            elapsed_since_start = timestamp_s - self.start_timestamp
+            bucket = int(elapsed_since_start / self.interval_seconds)
+
+            # Only include buckets in the requested range
+            if bucket < start_bucket or bucket >= end_bucket:
+                continue
+
+            # Keep highest-priority result per bucket
+            if bucket not in results_by_bucket:
+                results_by_bucket[bucket] = result
+            else:
+                results_by_bucket[bucket] = self._select_better_result(
+                    results_by_bucket[bucket], result
+                )
+
+        return results_by_bucket
+
+    def get_latest_by_type(self, check_type: "CheckType") -> "CheckResult | None":
+        """Get the most recent result of a specific check type.
+
+        Args:
+            check_type: The type of check to find
+
+        Returns:
+            The most recent result of that type, or None if none found
+        """
+        for result in reversed(self.results):
+            if result.check_type == check_type:
+                return result
+        return None
+
+    def get_all_results(self, check_type: "CheckType | None" = None) -> list["CheckResult"]:
+        """Get all results, optionally filtered by check type.
+
+        Args:
+            check_type: If provided, only return results of this type
+
+        Returns:
+            List of check results
+        """
+        if check_type is None:
+            return list(self.results)
+        return [r for r in self.results if r.check_type == check_type]
+
+    def _select_better_result(
+        self, current: "CheckResult", candidate: "CheckResult"
+    ) -> "CheckResult":
+        """Select the better of two results using check type priority.
+
+        Successful checks are preferred over failures. Among checks with the
+        same success state, higher-priority check types (HTTP > TCP > DNS > ICMP)
+        are preferred.
+
+        Args:
+            current: The current result
+            candidate: The candidate result to compare
+
+        Returns:
+            The better result
+        """
+        current_priority = self._priority_order.get(current.check_type, 999)
+        candidate_priority = self._priority_order.get(candidate.check_type, 999)
+
+        # Prefer successful results over failures
+        if candidate.success and not current.success:
+            return candidate
+        if not candidate.success and current.success:
+            return current
+
+        # Among same success state, prefer higher priority (lower number)
+        if candidate_priority < current_priority:
+            return candidate
+
+        return current
 
 
 class EndpointType(str, Enum):

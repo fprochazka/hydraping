@@ -2,7 +2,6 @@
 
 import asyncio
 import time
-from collections import defaultdict, deque
 
 from hydraping.checkers.dns import DNSChecker
 from hydraping.checkers.http import HTTPChecker
@@ -15,6 +14,7 @@ from hydraping.models import (
     CheckType,
     DomainEndpoint,
     Endpoint,
+    EndpointResultHistory,
     HTTPEndpoint,
     IPEndpoint,
     IPPortEndpoint,
@@ -41,20 +41,15 @@ class CheckOrchestrator:
         self.tcp_checker = TCPChecker(timeout=config.checks.timeout_seconds)
         self.http_checker = HTTPChecker(timeout=config.checks.timeout_seconds)
 
-        # Store results history per endpoint (rolling buffer)
-        # Key: endpoint.raw, Value: deque of CheckResult
+        # Store results history per endpoint using EndpointResultHistory
+        # Each history manages time bucketing, priority selection, and check hierarchy
         # Capacity: MAX_GRAPH_WIDTH * max_check_types (4) * safety_margin (2) = 2400
-        # Ensures we can display full graph width even on very wide terminals
-        history_capacity = MAX_GRAPH_WIDTH * 4 * 2
-        self.history: dict[str, deque[CheckResult]] = defaultdict(
-            lambda: deque(maxlen=history_capacity)
-        )
+        self.history_capacity = MAX_GRAPH_WIDTH * 4 * 2
+        self.history: dict[str, EndpointResultHistory] = {}
 
         # Control flags
         self._running = False
         self._task: asyncio.Task | None = None
-        self.start_time: float | None = None  # Monotonic time when checks started
-        self.start_timestamp: float | None = None  # Wall-clock time when checks started
 
     async def start(self):
         """Start the orchestration loop."""
@@ -78,8 +73,6 @@ class CheckOrchestrator:
         """Main loop that runs checks at configured interval."""
         interval = self.config.checks.interval_seconds
         start_time = time.monotonic()
-        self.start_time = start_time  # Monotonic time for graph rendering
-        self.start_timestamp = time.time()  # Wall-clock time for bucket calculations
         iteration = 0
 
         while self._running:
@@ -148,24 +141,28 @@ class CheckOrchestrator:
 
     def _store_result(self, endpoint: Endpoint, result: CheckResult):
         """Store result in history."""
-        self.history[endpoint.raw].append(result)
+        # Get or create history for this endpoint
+        if endpoint.raw not in self.history:
+            self.history[endpoint.raw] = EndpointResultHistory(
+                interval_seconds=self.config.checks.interval_seconds,
+                max_capacity=self.history_capacity,
+            )
+        self.history[endpoint.raw].add_result(result)
 
     def get_latest_result(self, endpoint: Endpoint, check_type: CheckType) -> CheckResult | None:
         """Get the most recent result for an endpoint and check type."""
-        results = self.history.get(endpoint.raw, [])
-        for result in reversed(results):
-            if result.check_type == check_type:
-                return result
-        return None
+        history = self.history.get(endpoint.raw)
+        if history is None:
+            return None
+        return history.get_latest_by_type(check_type)
 
-    def get_history(
-        self, endpoint: Endpoint, check_type: CheckType | None = None
-    ) -> list[CheckResult]:
-        """Get result history for an endpoint, optionally filtered by check type."""
-        results = list(self.history.get(endpoint.raw, []))
-        if check_type:
-            results = [r for r in results if r.check_type == check_type]
-        return results
+    def get_history(self, endpoint: Endpoint) -> EndpointResultHistory | None:
+        """Get result history object for an endpoint.
+
+        Returns:
+            EndpointResultHistory for the endpoint, or None if no history yet
+        """
+        return self.history.get(endpoint.raw)
 
     def get_problems(self, endpoint: Endpoint) -> list[str]:
         """Get list of current problems for an endpoint."""

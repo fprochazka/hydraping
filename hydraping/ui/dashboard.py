@@ -5,7 +5,7 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
-from hydraping.models import CHECK_TYPE_PRIORITY, CheckType, Endpoint
+from hydraping.models import CheckType, Endpoint
 from hydraping.orchestrator import CheckOrchestrator
 from hydraping.ui.constants import get_latency_color
 from hydraping.ui.graph import LatencyGraph
@@ -91,53 +91,47 @@ class Dashboard:
 
     def _add_endpoint_row(self, table: Table, endpoint: Endpoint):
         """Add a row for an endpoint to the table."""
-        # Get all check results for this endpoint (both success and failure)
-        # The graph renderer will handle bucketing and priority selection
-        all_results = []
-        for check_type in CHECK_TYPE_PRIORITY:
-            history = self.orchestrator.get_history(endpoint, check_type)
-            if history:
-                all_results.extend(history)
+        # Get result history for this endpoint
+        history = self.orchestrator.get_history(endpoint)
 
-        # Get the result currently displayed in the graph's rightmost position
-        # This ensures latency/protocol display matches what the graph shows
-        latency_result = LatencyGraph.get_current_result(
-            all_results,
-            self.orchestrator.start_time,
-            self.orchestrator.start_timestamp,
-            self.orchestrator.config.checks.interval_seconds,
-        )
-
-        # Format latency time and protocol separately
-        if latency_result and latency_result.success and latency_result.latency_ms is not None:
-            # Build check label with port/protocol info
-            check_label = latency_result.check_type.value.upper()
-            if latency_result.check_type == CheckType.TCP and latency_result.port:
-                check_label = f"TCP:{latency_result.port}"
-            elif latency_result.check_type == CheckType.HTTP and latency_result.protocol:
-                check_label = latency_result.protocol.upper()
-
-            time_str = f"{latency_result.latency_ms:.1f}ms"
-            protocol_str = f"({check_label})"
-            latency_style = get_latency_color(latency_result.latency_ms)
-        elif latency_result and not latency_result.success:
-            check_label = latency_result.check_type.value.upper()
-            time_str = "FAIL"
-            protocol_str = f"({check_label})"
-            latency_style = "red"
-        else:
+        if history is None:
+            # No data yet
             time_str = "N/A"
             protocol_str = ""
             latency_style = "dim"
+            graph_renderer = self.graphs[endpoint.raw]
+            graph_text = Text(graph_renderer.EMPTY_CHAR * graph_renderer.width, style="dim")
+        else:
+            # Get the current result (what should be displayed now)
+            # This is synchronized with what the graph shows
+            latency_result = history.get_current_result()
 
-        # Render the graph
-        graph_renderer = self.graphs[endpoint.raw]
-        graph_text = graph_renderer.render(
-            all_results,
-            self.orchestrator.start_time,
-            self.orchestrator.start_timestamp,
-            self.orchestrator.config.checks.interval_seconds,
-        )
+            # Format latency time and protocol separately
+            if latency_result and latency_result.success and latency_result.latency_ms is not None:
+                # Build check label with port/protocol info
+                check_label = latency_result.check_type.value.upper()
+                if latency_result.check_type == CheckType.TCP and latency_result.port:
+                    check_label = f"TCP:{latency_result.port}"
+                elif latency_result.check_type == CheckType.HTTP and latency_result.protocol:
+                    check_label = latency_result.protocol.upper()
+
+                time_str = f"{latency_result.latency_ms:.1f}ms"
+                protocol_str = f"({check_label})"
+                latency_style = get_latency_color(latency_result.latency_ms)
+            elif latency_result and not latency_result.success:
+                check_label = latency_result.check_type.value.upper()
+                time_str = "FAIL"
+                protocol_str = f"({check_label})"
+                latency_style = "red"
+            else:
+                time_str = "N/A"
+                protocol_str = ""
+                latency_style = "dim"
+
+            # Get bucketed results and render the graph
+            graph_renderer = self.graphs[endpoint.raw]
+            bucketed_results = history.get_bucketed_results(graph_renderer.width)
+            graph_text = graph_renderer.render(bucketed_results)
 
         # Add row
         table.add_row(

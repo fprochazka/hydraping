@@ -1,7 +1,5 @@
 """Latency graph rendering for terminal UI."""
 
-import time
-
 from rich.text import Text
 
 from hydraping.models import CheckResult
@@ -27,139 +25,31 @@ class LatencyGraph:
         """Initialize graph with fixed width."""
         self.width = width
 
-    @staticmethod
-    def get_current_result(
-        results: list[CheckResult],
-        start_time: float | None,
-        start_timestamp: float | None,
-        interval_seconds: float,
-    ) -> CheckResult | None:
-        """
-        Get the result currently displayed in the graph's rightmost position.
+    def render(self, bucketed_results: dict[int, CheckResult]) -> Text:
+        """Render graph from pre-bucketed check results.
 
-        This uses the same bucketing and priority logic as render() to determine
-        which check result is actually being shown in the last graph position.
+        The bucketing and priority selection is already done by EndpointResultHistory,
+        so this method just focuses on rendering the visual representation.
 
         Args:
-            results: List of check results
-            start_time: Monotonic time when checks started
-            start_timestamp: Wall-clock time when checks started
-            interval_seconds: Check interval in seconds
-
-        Returns:
-            The CheckResult being displayed, or None if no data yet
-        """
-        if start_time is None or start_timestamp is None or not results:
-            return None
-
-        from hydraping.models import CHECK_TYPE_PRIORITY
-
-        priority_order = {check_type: i for i, check_type in enumerate(CHECK_TYPE_PRIORITY)}
-
-        # Calculate current time bucket
-        now = time.monotonic()
-        elapsed = now - start_time
-        current_bucket = int(elapsed / interval_seconds)
-
-        # Find all results in the current bucket
-        current_bucket_result = None
-
-        for result in results:
-            timestamp_s = result.timestamp.timestamp()
-            elapsed_since_start = timestamp_s - start_timestamp
-            bucket = int(elapsed_since_start / interval_seconds)
-
-            # Only consider results in the current bucket
-            if bucket != current_bucket:
-                continue
-
-            # Keep highest-priority result (same logic as render())
-            if current_bucket_result is None:
-                current_bucket_result = result
-            else:
-                current_priority = priority_order.get(current_bucket_result.check_type, 999)
-                new_priority = priority_order.get(result.check_type, 999)
-
-                # Replace if new is better: success over failure, or same state + higher priority
-                should_replace = False
-                if result.success and not current_bucket_result.success:
-                    should_replace = True
-                elif (
-                    result.success == current_bucket_result.success
-                    and new_priority < current_priority
-                ):
-                    should_replace = True
-
-                if should_replace:
-                    current_bucket_result = result
-
-        return current_bucket_result
-
-    def render(
-        self,
-        results: list[CheckResult],
-        start_time: float | None,
-        start_timestamp: float | None,
-        interval_seconds: float,
-    ) -> Text:
-        """
-        Render graph from check results with time-bucket awareness.
-
-        Args:
-            results: List of check results to render
-            start_time: Monotonic time when checks started (for current bucket calculation)
-            start_timestamp: Wall-clock time when checks started (for result bucketing)
-            interval_seconds: Check interval in seconds
+            bucketed_results: Dictionary mapping bucket number to CheckResult
+                             (from EndpointResultHistory.get_bucketed_results)
 
         Returns:
             Text object with properly styled graph
         """
-        if start_time is None or start_timestamp is None:
-            # Not started yet - all dots
+        if not bucketed_results:
+            # No data yet - all dots
             return Text(self.EMPTY_CHAR * self.width, style="dim")
 
-        # Calculate current time bucket
-        now = time.monotonic()
-        elapsed = now - start_time
-        current_bucket = int(elapsed / interval_seconds)
+        # Find the range of buckets we have data for
+        bucket_numbers = sorted(bucketed_results.keys())
+        if not bucket_numbers:
+            return Text(self.EMPTY_CHAR * self.width, style="dim")
 
-        # Calculate which buckets to display (most recent width buckets)
+        current_bucket = bucket_numbers[-1]  # Most recent bucket
         start_bucket = max(0, current_bucket - self.width + 1)
         end_bucket = current_bucket + 1
-
-        # Check type priority (HTTP is highest, ICMP is lowest)
-        from hydraping.models import CHECK_TYPE_PRIORITY
-
-        priority_order = {check_type: i for i, check_type in enumerate(CHECK_TYPE_PRIORITY)}
-
-        # Create a dict of results by bucket number
-        # Use wall-clock timestamps for accurate bucketing
-        results_by_bucket = {}
-
-        for result in results:
-            timestamp_s = result.timestamp.timestamp()
-            # Calculate bucket relative to start_timestamp (wall-clock time)
-            elapsed_since_start = timestamp_s - start_timestamp
-            bucket = int(elapsed_since_start / interval_seconds)
-
-            # Keep highest-priority result per bucket (successful or failed)
-            if bucket not in results_by_bucket:
-                results_by_bucket[bucket] = result
-            else:
-                current_result = results_by_bucket[bucket]
-                # Prefer successful results, then by priority
-                current_priority = priority_order.get(current_result.check_type, 999)
-                new_priority = priority_order.get(result.check_type, 999)
-
-                # Replace if new is better: success over failure, or same state + higher priority
-                should_replace = False
-                if result.success and not current_result.success:
-                    should_replace = True
-                elif result.success == current_result.success and new_priority < current_priority:
-                    should_replace = True
-
-                if should_replace:
-                    results_by_bucket[bucket] = result
 
         # Build graph with proper styling per character
         graph_text = Text()
@@ -180,7 +70,7 @@ class LatencyGraph:
 
         # Render each bucket with appropriate styling
         for bucket_num in buckets_to_show:
-            result = results_by_bucket.get(bucket_num)
+            result = bucketed_results.get(bucket_num)
 
             if result is None:
                 # No data for this bucket yet - show dim dot
