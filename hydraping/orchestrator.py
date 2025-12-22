@@ -39,7 +39,9 @@ class CheckOrchestrator:
 
         # Store results history per endpoint (rolling buffer)
         # Key: endpoint.raw, Value: deque of CheckResult
-        self.history: dict[str, deque[CheckResult]] = defaultdict(lambda: deque(maxlen=100))
+        # Capacity: max_graph_width (300) * max_check_types (4) * safety_margin (2) = 2400
+        # Ensures we can display full graph width even on very wide terminals
+        self.history: dict[str, deque[CheckResult]] = defaultdict(lambda: deque(maxlen=2400))
 
         # Callback for when new results are available
         self.on_result: Callable[[Endpoint, CheckResult], None] | None = None
