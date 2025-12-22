@@ -130,6 +130,17 @@ class LatencyGraph:
                 # Failed check - use red exclamation mark
                 graph_text.append("!", style="red")
 
+        # Ensure we rendered exactly the expected width
+        actual_length = len(graph_text.plain)
+        if actual_length != self.width:
+            # This shouldn't happen, but log it if it does
+            import sys
+
+            print(
+                f"WARNING: Graph width mismatch: expected {self.width}, got {actual_length}",
+                file=sys.stderr,
+            )
+
         return graph_text
 
     def _get_bar_for_latency(self, latency_ms: float) -> tuple[str, str]:
