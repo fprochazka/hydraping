@@ -100,7 +100,9 @@ class Dashboard:
             protocol_str = ""
             latency_style = "dim"
             graph_renderer = self.graphs[endpoint.raw]
-            graph_text = Text(graph_renderer.EMPTY_CHAR * graph_renderer.width, style="dim")
+            # Render empty graph (all None)
+            bucketed_results = [None] * graph_renderer.width
+            graph_text = graph_renderer.render(bucketed_results)
         else:
             # Get the current result (what should be displayed now)
             # This is synchronized with what the graph shows
@@ -129,6 +131,7 @@ class Dashboard:
                 latency_style = "dim"
 
             # Get bucketed results and render the graph
+            # History prepares the ready-to-render list, graph just renders it
             graph_renderer = self.graphs[endpoint.raw]
             bucketed_results = history.get_bucketed_results(graph_renderer.width)
             graph_text = graph_renderer.render(bucketed_results)

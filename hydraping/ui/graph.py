@@ -25,55 +25,28 @@ class LatencyGraph:
         """Initialize graph with fixed width."""
         self.width = width
 
-    def render(self, bucketed_results: dict[int, CheckResult]) -> Text:
+    def render(self, bucketed_results: list[CheckResult | None]) -> Text:
         """Render graph from pre-bucketed check results.
 
-        The bucketing and priority selection is already done by EndpointResultHistory,
-        so this method just focuses on rendering the visual representation.
+        The bucketing, time range calculation, and priority selection are all
+        done by EndpointResultHistory. This method is a pure renderer - it just
+        iterates over the provided list and renders each position.
 
         Args:
-            bucketed_results: Dictionary mapping bucket number to CheckResult
-                             (from EndpointResultHistory.get_bucketed_results)
+            bucketed_results: List of CheckResult or None, where each position
+                            represents a time bucket from oldest to newest.
+                            From EndpointResultHistory.get_bucketed_results().
 
         Returns:
             Text object with properly styled graph
         """
-        if not bucketed_results:
-            # No data yet - all dots
-            return Text(self.EMPTY_CHAR * self.width, style="dim")
-
-        # Find the range of buckets we have data for
-        bucket_numbers = sorted(bucketed_results.keys())
-        if not bucket_numbers:
-            return Text(self.EMPTY_CHAR * self.width, style="dim")
-
-        current_bucket = bucket_numbers[-1]  # Most recent bucket
-        start_bucket = max(0, current_bucket - self.width + 1)
-        end_bucket = current_bucket + 1
-
         # Build graph with proper styling per character
         graph_text = Text()
 
-        # Calculate which buckets to display
-        buckets_to_show = list(range(start_bucket, end_bucket))
-
-        # Ensure we show exactly self.width buckets
-        if len(buckets_to_show) > self.width:
-            buckets_to_show = buckets_to_show[-self.width :]
-
-        # Calculate padding needed on the left
-        padding_needed = max(0, self.width - len(buckets_to_show))
-
-        # Render padding (empty dots) on the left
-        for _ in range(padding_needed):
-            graph_text.append(self.EMPTY_CHAR, style="dim")
-
-        # Render each bucket with appropriate styling
-        for bucket_num in buckets_to_show:
-            result = bucketed_results.get(bucket_num)
-
+        # Render each position in the list
+        for result in bucketed_results:
             if result is None:
-                # No data for this bucket yet - show dim dot
+                # No data for this bucket - show dim dot
                 graph_text.append(self.EMPTY_CHAR, style="dim")
             elif result.success and result.latency_ms is not None:
                 # Calculate bar height and color based on latency

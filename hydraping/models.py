@@ -112,20 +112,36 @@ class EndpointResultHistory:
 
         return current_bucket_result
 
-    def get_bucketed_results(self, num_buckets: int) -> dict[int, "CheckResult"]:
-        """Get bucketed results for the last N time buckets.
+    def get_current_bucket(self) -> int:
+        """Get the current time bucket number.
 
-        Each bucket contains the highest-priority result that completed
-        during that time interval.
+        Returns:
+            The current bucket number based on elapsed time since start
+        """
+        if self.start_timestamp is None:
+            return 0
+
+        now = time.time()
+        elapsed = now - self.start_timestamp
+        return int(elapsed / self.interval_seconds)
+
+    def get_bucketed_results(self, num_buckets: int) -> list["CheckResult | None"]:
+        """Get bucketed results for the last N time buckets, ready to render.
+
+        Returns a list of exactly num_buckets length, where each position
+        represents a time bucket from oldest to newest. Each element is
+        either a CheckResult or None (no data for that bucket).
 
         Args:
             num_buckets: Number of recent buckets to return
 
         Returns:
-            Dictionary mapping bucket number to CheckResult
+            List of CheckResult or None, with length exactly num_buckets.
+            Index 0 = oldest bucket, Index -1 = most recent bucket.
         """
         if self.start_time is None or self.start_timestamp is None:
-            return {}
+            # No data yet - return all None
+            return [None] * num_buckets
 
         # Calculate current bucket range using wall-clock time
         # (must match how we calculate result buckets)
@@ -135,8 +151,8 @@ class EndpointResultHistory:
         start_bucket = max(0, current_bucket - num_buckets + 1)
         end_bucket = current_bucket + 1
 
-        # Build bucketed results
-        results_by_bucket = {}
+        # Build bucketed results dict first
+        results_by_bucket: dict[int, CheckResult] = {}
 
         for result in self.results:
             timestamp_s = result.timestamp.timestamp()
@@ -155,7 +171,12 @@ class EndpointResultHistory:
                     results_by_bucket[bucket], result
                 )
 
-        return results_by_bucket
+        # Convert to list format for easy rendering
+        result_list: list[CheckResult | None] = []
+        for bucket_num in range(start_bucket, end_bucket):
+            result_list.append(results_by_bucket.get(bucket_num))
+
+        return result_list
 
     def get_latest_by_type(self, check_type: "CheckType") -> "CheckResult | None":
         """Get the most recent result of a specific check type.
