@@ -80,6 +80,10 @@ class EndpointResultHistory:
         in the current time bucket. Uses check type hierarchy to select the
         best result when multiple checks completed in the same bucket.
 
+        For better UX, if the current bucket has no data yet (new interval just
+        started), falls back to the previous bucket so the latency doesn't
+        disappear between check iterations.
+
         Returns:
             The current result to display, or None if no data yet
         """
@@ -109,6 +113,25 @@ class EndpointResultHistory:
                 current_bucket_result = result
             else:
                 current_bucket_result = self._select_better_result(current_bucket_result, result)
+
+        # If no data in current bucket, fall back to previous bucket
+        # This prevents latency from disappearing between check iterations
+        if current_bucket_result is None and current_bucket > 0:
+            previous_bucket = current_bucket - 1
+            for result in self.results:
+                timestamp_s = result.timestamp.timestamp()
+                elapsed_since_start = timestamp_s - self.start_timestamp
+                bucket = int(elapsed_since_start / self.interval_seconds)
+
+                if bucket != previous_bucket:
+                    continue
+
+                if current_bucket_result is None:
+                    current_bucket_result = result
+                else:
+                    current_bucket_result = self._select_better_result(
+                        current_bucket_result, result
+                    )
 
         return current_bucket_result
 
