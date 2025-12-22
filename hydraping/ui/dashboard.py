@@ -142,6 +142,7 @@ class Dashboard:
         graph_text = graph_renderer.render(
             all_results,
             self.orchestrator.start_time,
+            self.orchestrator.start_timestamp,
             self.orchestrator.config.checks.interval_seconds,
         )
 
@@ -194,7 +195,7 @@ class Dashboard:
             while True:
                 # Update the display with fresh data
                 live.update(self.render())
-                await asyncio.sleep(0.25)  # Update 4 times per second
+                await asyncio.sleep(1.0)  # Update once per second
         except KeyboardInterrupt:
             # Suppress KeyboardInterrupt output
             pass

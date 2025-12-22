@@ -28,15 +28,25 @@ class LatencyGraph:
         self.width = width
 
     def render(
-        self, results: list[CheckResult], start_time: float | None, interval_seconds: float
+        self,
+        results: list[CheckResult],
+        start_time: float | None,
+        start_timestamp: float | None,
+        interval_seconds: float,
     ) -> Text:
         """
         Render graph from check results with time-bucket awareness.
 
+        Args:
+            results: List of check results to render
+            start_time: Monotonic time when checks started (for current bucket calculation)
+            start_timestamp: Wall-clock time when checks started (for result bucketing)
+            interval_seconds: Check interval in seconds
+
         Returns:
             Text object with properly styled graph
         """
-        if start_time is None:
+        if start_time is None or start_timestamp is None:
             # Not started yet - all dots
             return Text(self.EMPTY_CHAR * self.width, style="dim")
 
@@ -60,15 +70,12 @@ class LatencyGraph:
         }
 
         # Create a dict of results by bucket number
-        # Need to convert result timestamps to bucket numbers relative to start_time
+        # Use wall-clock timestamps for accurate bucketing
         results_by_bucket = {}
-
-        # Get the Unix timestamp of start_time for conversion
-        start_timestamp = time.time() - (now - start_time)
 
         for result in results:
             timestamp_s = result.timestamp.timestamp()
-            # Calculate bucket relative to start_time
+            # Calculate bucket relative to start_timestamp (wall-clock time)
             elapsed_since_start = timestamp_s - start_timestamp
             bucket = int(elapsed_since_start / interval_seconds)
 
