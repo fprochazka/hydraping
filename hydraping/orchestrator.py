@@ -3,7 +3,6 @@
 import asyncio
 import time
 from collections import defaultdict, deque
-from collections.abc import Callable
 
 from hydraping.checkers.dns import DNSChecker
 from hydraping.checkers.http import HTTPChecker
@@ -19,6 +18,9 @@ from hydraping.models import (
     IPEndpoint,
     IPPortEndpoint,
 )
+
+# Maximum expected graph width for history buffer sizing
+MAX_GRAPH_WIDTH = 300
 
 
 class CheckOrchestrator:
@@ -40,12 +42,12 @@ class CheckOrchestrator:
 
         # Store results history per endpoint (rolling buffer)
         # Key: endpoint.raw, Value: deque of CheckResult
-        # Capacity: max_graph_width (300) * max_check_types (4) * safety_margin (2) = 2400
+        # Capacity: MAX_GRAPH_WIDTH * max_check_types (4) * safety_margin (2) = 2400
         # Ensures we can display full graph width even on very wide terminals
-        self.history: dict[str, deque[CheckResult]] = defaultdict(lambda: deque(maxlen=2400))
-
-        # Callback for when new results are available
-        self.on_result: Callable[[Endpoint, CheckResult], None] | None = None
+        history_capacity = MAX_GRAPH_WIDTH * 4 * 2
+        self.history: dict[str, deque[CheckResult]] = defaultdict(
+            lambda: deque(maxlen=history_capacity)
+        )
 
         # Control flags
         self._running = False
@@ -126,11 +128,10 @@ class CheckOrchestrator:
         result = await self.icmp_checker.check(target)
         self._store_result(endpoint, result)
 
-    async def _check_dns(self, endpoint: Endpoint, target: str) -> CheckResult:
+    async def _check_dns(self, endpoint: Endpoint, target: str):
         """Run DNS check and store result."""
         result = await self.dns_checker.check(target)
         self._store_result(endpoint, result)
-        return result
 
     async def _check_tcp(self, endpoint: Endpoint, host: str, port: int):
         """Run TCP check and store result."""
@@ -143,12 +144,8 @@ class CheckOrchestrator:
         self._store_result(endpoint, result)
 
     def _store_result(self, endpoint: Endpoint, result: CheckResult):
-        """Store result in history and notify UI immediately."""
+        """Store result in history."""
         self.history[endpoint.raw].append(result)
-
-        # Trigger UI update immediately when result is available
-        if self.on_result:
-            self.on_result(endpoint, result)
 
     def get_latest_result(self, endpoint: Endpoint, check_type: CheckType) -> CheckResult | None:
         """Get the most recent result for an endpoint and check type."""

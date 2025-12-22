@@ -31,8 +31,16 @@ class DNSChecker(BaseChecker):
 
             # Measure resolution time
             start_time = time.perf_counter()
-            _ = await resolver.resolve(target, "A")
+            answer = await resolver.resolve(target, "A")
             end_time = time.perf_counter()
+
+            # Verify we got at least one A record
+            if not answer or len(answer) == 0:
+                return self._create_result(
+                    check_type=CheckType.DNS,
+                    success=False,
+                    error_message="No A records returned",
+                )
 
             latency_ms = (end_time - start_time) * 1000
 

@@ -42,6 +42,7 @@ class HTTPChecker(BaseChecker):
                             check_type=CheckType.HTTP,
                             success=False,
                             error_message=f"HTTP {response.status} {response.reason}",
+                            protocol=protocol,
                         )
 
         except aiohttp.ClientConnectorError as e:
@@ -49,22 +50,26 @@ class HTTPChecker(BaseChecker):
                 check_type=CheckType.HTTP,
                 success=False,
                 error_message=f"Connection failed: {e}",
+                protocol=protocol,
             )
         except aiohttp.ServerTimeoutError:
             return self._create_result(
                 check_type=CheckType.HTTP,
                 success=False,
                 error_message=f"Request timeout (>{self.timeout}s)",
+                protocol=protocol,
             )
         except aiohttp.ClientError as e:
             return self._create_result(
                 check_type=CheckType.HTTP,
                 success=False,
                 error_message=f"HTTP client error: {e}",
+                protocol=protocol,
             )
         except Exception as e:
             return self._create_result(
                 check_type=CheckType.HTTP,
                 success=False,
                 error_message=f"HTTP error: {e}",
+                protocol=protocol,
             )

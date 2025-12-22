@@ -5,7 +5,7 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
-from hydraping.models import CheckResult, CheckType, Endpoint
+from hydraping.models import CheckType, Endpoint
 from hydraping.orchestrator import CheckOrchestrator
 from hydraping.ui.constants import get_latency_color
 from hydraping.ui.graph import LatencyGraph
@@ -173,18 +173,15 @@ class Dashboard:
 
     async def run(self):
         """Run the live dashboard."""
-        # Set up callback to update display when results come in
+        # Set up live display with automatic refresh
+        # Note: We rely on refresh_per_second for updates to avoid race conditions
+        # from concurrent check results calling live.update() simultaneously
         live = Live(
             self.render(),
             console=self.console,
             refresh_per_second=4,
             screen=False,
         )
-
-        def on_result(endpoint: Endpoint, result: CheckResult) -> None:
-            live.update(self.render())
-
-        self.orchestrator.on_result = on_result
 
         # Start orchestrator and live display
         live.start()

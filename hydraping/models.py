@@ -1,5 +1,6 @@
 """Core data models for HydraPing."""
 
+import ipaddress
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -67,15 +68,33 @@ class Endpoint:
         if endpoint_str.startswith(("http://", "https://")):
             return HTTPEndpoint.from_string(endpoint_str)
 
-        # IP:port endpoint
-        if ":" in endpoint_str:
+        # IP:port endpoint (with IPv6 bracket notation support)
+        # IPv6 with port: [2001:4860:4860::8888]:80
+        # IPv4 with port: 1.1.1.1:53
+        if endpoint_str.startswith("[") and "]:" in endpoint_str:
+            # IPv6 bracket notation
+            try:
+                bracket_end = endpoint_str.index("]:")
+                ip_part = endpoint_str[1:bracket_end]
+                port_part = endpoint_str[bracket_end + 2 :]
+                if _is_ip_address(ip_part):
+                    port = int(port_part)
+                    if not (1 <= port <= 65535):
+                        raise ValueError(f"Port {port} out of valid range 1-65535")
+                    return IPPortEndpoint(raw=endpoint_str, ip=ip_part, port=port)
+            except (ValueError, IndexError):
+                pass
+        elif ":" in endpoint_str and not endpoint_str.count(":") > 1:
+            # IPv4 with port (single colon)
             parts = endpoint_str.split(":")
             if len(parts) == 2:
                 ip_part, port_part = parts
-                # Check if it looks like an IP
+                # Check if it looks like an IPv4 address
                 if _is_ip_address(ip_part):
                     try:
                         port = int(port_part)
+                        if not (1 <= port <= 65535):
+                            raise ValueError(f"Port {port} out of valid range 1-65535")
                         return IPPortEndpoint(raw=endpoint_str, ip=ip_part, port=port)
                     except ValueError:
                         pass
@@ -194,11 +213,9 @@ class HTTPEndpoint(Endpoint):
 
 
 def _is_ip_address(s: str) -> bool:
-    """Check if string looks like an IP address (simple check)."""
-    parts = s.split(".")
-    if len(parts) != 4:
-        return False
+    """Check if string is a valid IP address (IPv4 or IPv6)."""
     try:
-        return all(0 <= int(part) <= 255 for part in parts)
+        ipaddress.ip_address(s)
+        return True
     except ValueError:
         return False

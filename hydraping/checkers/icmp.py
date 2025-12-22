@@ -21,11 +21,14 @@ class ICMPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.ICMP,
                 success=False,
-                error_message="ICMP unavailable (no permissions)",
+                error_message="ICMP unavailable (insufficient permissions)",
             )
 
         try:
-            # Use async ping from icmplib
+            # Use async ping from icmplib with privileged=False
+            # This uses SOCK_DGRAM instead of SOCK_RAW, which works on most systems
+            # without requiring root/CAP_NET_RAW privileges. If this fails with
+            # permission errors, we'll detect it and disable ICMP checks gracefully.
             host = await icmplib.async_ping(target, count=1, timeout=self.timeout, privileged=False)
 
             if host.is_alive:
@@ -55,7 +58,7 @@ class ICMPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.ICMP,
                 success=False,
-                error_message=f"ICMP unavailable: {e}",
+                error_message=f"ICMP unavailable (insufficient permissions): {e}",
             )
         except Exception as e:
             return self._create_result(

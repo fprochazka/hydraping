@@ -88,7 +88,7 @@ class Config:
 
         # Parse UI config
         ui_data = data.get("ui", {})
-        ui = UIConfig(graph_width=ui_data.get("graph_width", 60))
+        ui = UIConfig(graph_width=ui_data.get("graph_width", 0))
 
         return Config(endpoints=endpoints, dns=dns, checks=checks, ui=ui)
 
