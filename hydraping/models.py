@@ -86,9 +86,10 @@ class EndpointResultHistory:
         if self.start_time is None or self.start_timestamp is None or not self.results:
             return None
 
-        # Calculate current time bucket
-        now = time.monotonic()
-        elapsed = now - self.start_time
+        # Calculate current time bucket using wall-clock time
+        # (must match how we calculate result buckets)
+        now = time.time()
+        elapsed = now - self.start_timestamp
         current_bucket = int(elapsed / self.interval_seconds)
 
         # Find highest-priority result in current bucket
@@ -126,9 +127,10 @@ class EndpointResultHistory:
         if self.start_time is None or self.start_timestamp is None:
             return {}
 
-        # Calculate current bucket range
-        now = time.monotonic()
-        elapsed = now - self.start_time
+        # Calculate current bucket range using wall-clock time
+        # (must match how we calculate result buckets)
+        now = time.time()
+        elapsed = now - self.start_timestamp
         current_bucket = int(elapsed / self.interval_seconds)
         start_bucket = max(0, current_bucket - num_buckets + 1)
         end_bucket = current_bucket + 1
