@@ -37,22 +37,26 @@ class TCPChecker(BaseChecker):
                 check_type=CheckType.TCP,
                 success=False,
                 error_message=f"Connection timeout (>{self.timeout}s)",
+                port=port,
             )
         except ConnectionRefusedError:
             return self._create_result(
                 check_type=CheckType.TCP,
                 success=False,
                 error_message=f"Connection refused on port {port}",
+                port=port,
             )
         except OSError as e:
             return self._create_result(
                 check_type=CheckType.TCP,
                 success=False,
                 error_message=f"Network error: {e}",
+                port=port,
             )
         except Exception as e:
             return self._create_result(
                 check_type=CheckType.TCP,
                 success=False,
                 error_message=f"TCP error: {e}",
+                port=port,
             )

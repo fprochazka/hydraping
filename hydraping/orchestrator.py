@@ -1,6 +1,7 @@
 """Async orchestration of all connectivity checks."""
 
 import asyncio
+import time
 from collections import defaultdict, deque
 from collections.abc import Callable
 
@@ -71,8 +72,6 @@ class CheckOrchestrator:
 
     async def _run_loop(self):
         """Main loop that runs checks at configured interval."""
-        import time
-
         interval = self.config.checks.interval_seconds
         start_time = time.monotonic()
         self.start_time = start_time  # Expose for graph rendering
@@ -189,7 +188,7 @@ class CheckOrchestrator:
             result = self.get_latest_result(endpoint, check_type)
             if result and not result.success:
                 # Skip ICMP unavailable errors (system-wide permission issues)
-                if "ICMP unavailable" in result.error_message:
+                if check_type == CheckType.ICMP and self.icmp_checker._permission_denied:
                     continue
 
                 # Skip lower-level failures if a higher-level check succeeded

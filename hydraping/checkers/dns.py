@@ -4,6 +4,7 @@ import time
 
 import dns.asyncresolver
 import dns.exception
+import dns.resolver
 
 from hydraping.checkers.base import BaseChecker
 from hydraping.models import CheckResult, CheckType

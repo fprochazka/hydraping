@@ -1,8 +1,16 @@
 """Latency graph rendering for terminal UI."""
 
+import time
+
 from rich.text import Text
 
 from hydraping.models import CheckResult
+from hydraping.ui.constants import (
+    LATENCY_GREEN_MAX,
+    LATENCY_ORANGE_MAX,
+    LATENCY_YELLOW_MAX,
+    get_latency_color,
+)
 
 
 class LatencyGraph:
@@ -28,8 +36,6 @@ class LatencyGraph:
         Returns:
             Text object with properly styled graph
         """
-        import time
-
         if start_time is None:
             # Not started yet - all dots
             return Text(self.EMPTY_CHAR * self.width, style="dim")
@@ -94,11 +100,13 @@ class LatencyGraph:
         # Ensure we show exactly self.width buckets
         if len(buckets_to_show) > self.width:
             buckets_to_show = buckets_to_show[-self.width :]
-        elif len(buckets_to_show) < self.width:
-            # Pad on the left with empty buckets
-            padding_needed = self.width - len(buckets_to_show)
-            padding_buckets = list(range(start_bucket - padding_needed, start_bucket))
-            buckets_to_show = padding_buckets + buckets_to_show
+
+        # Calculate padding needed on the left
+        padding_needed = max(0, self.width - len(buckets_to_show))
+
+        # Render padding (empty dots) on the left
+        for _ in range(padding_needed):
+            graph_text.append(self.EMPTY_CHAR, style="dim")
 
         # Render each bucket with appropriate styling
         for bucket_num in buckets_to_show:
@@ -121,32 +129,27 @@ class LatencyGraph:
         """
         Get bar character and color for a given latency.
 
-        Color scheme matching latency severity:
-        - Green: <50ms (good)
-        - Yellow: 50-100ms (medium)
-        - Orange: 100-200ms (concerning)
-        - Red: >200ms (bad)
+        Uses constants from ui.constants for consistent color thresholds.
 
         Returns:
             Tuple of (bar_character, color_name)
         """
-        # Determine color zone and height within that zone
-        if latency_ms < 50:
-            # Green zone (0-50ms) - good
-            color = "green"
-            ratio = latency_ms / 50.0
-        elif latency_ms < 100:
-            # Yellow zone (50-100ms) - medium
-            color = "yellow"
-            ratio = (latency_ms - 50) / 50.0
-        elif latency_ms < 200:
-            # Orange zone (100-200ms) - concerning
-            color = "orange1"
-            ratio = (latency_ms - 100) / 100.0
+        # Get color using shared logic
+        color = get_latency_color(latency_ms)
+
+        # Determine height ratio within color zone
+        if latency_ms < LATENCY_GREEN_MAX:
+            # Green zone - good
+            ratio = latency_ms / LATENCY_GREEN_MAX
+        elif latency_ms < LATENCY_YELLOW_MAX:
+            # Yellow zone - medium
+            ratio = (latency_ms - LATENCY_GREEN_MAX) / (LATENCY_YELLOW_MAX - LATENCY_GREEN_MAX)
+        elif latency_ms < LATENCY_ORANGE_MAX:
+            # Orange zone - concerning
+            ratio = (latency_ms - LATENCY_YELLOW_MAX) / (LATENCY_ORANGE_MAX - LATENCY_YELLOW_MAX)
         else:
-            # Red zone (>200ms) - bad
-            color = "red"
-            ratio = min((latency_ms - 200) / 300.0, 1.0)
+            # Red zone - bad
+            ratio = min((latency_ms - LATENCY_ORANGE_MAX) / 300.0, 1.0)
 
         # Map ratio to block character (8 levels per color zone)
         block_index = int(ratio * 7)  # 0-7

@@ -5,8 +5,9 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
-from hydraping.models import CheckType, Endpoint
+from hydraping.models import CheckResult, CheckType, Endpoint
 from hydraping.orchestrator import CheckOrchestrator
+from hydraping.ui.constants import get_latency_color
 from hydraping.ui.graph import LatencyGraph
 
 
@@ -29,6 +30,14 @@ class Dashboard:
     def _calculate_column_widths(self):
         """Calculate fixed column widths based on terminal size."""
         terminal_width = self.console.width
+
+        # Validate minimum terminal width
+        MIN_TERMINAL_WIDTH = 60
+        if terminal_width < MIN_TERMINAL_WIDTH:
+            raise ValueError(
+                f"Terminal too narrow ({terminal_width} chars). "
+                f"Minimum width required: {MIN_TERMINAL_WIDTH} chars"
+            )
 
         # Endpoint column: longest endpoint name + padding
         endpoint_names = [ep.display_name for ep in self.orchestrator.endpoints]
@@ -92,7 +101,10 @@ class Dashboard:
         if not latency_result:
             for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]:
                 result = self.orchestrator.get_latest_result(endpoint, check_type)
-                if result and "unavailable" not in result.error_message:
+                # Skip "unavailable" errors (like ICMP permission issues)
+                if result and (
+                    not result.error_message or "unavailable" not in result.error_message
+                ):
                     latency_result = result
                     break
 
@@ -107,7 +119,7 @@ class Dashboard:
 
             time_str = f"{latency_result.latency_ms:.1f}ms"
             protocol_str = f"({check_label})"
-            latency_style = self._get_latency_color(latency_result.latency_ms)
+            latency_style = get_latency_color(latency_result.latency_ms)
         elif latency_result and not latency_result.success:
             check_label = latency_result.check_type.value.upper()
             time_str = "FAIL"
@@ -141,17 +153,6 @@ class Dashboard:
             Text(protocol_str, style="dim"),
         )
 
-    def _get_latency_color(self, latency_ms: float) -> str:
-        """Get color for latency value (matching graph color zones)."""
-        if latency_ms < 50:
-            return "green"
-        elif latency_ms < 100:
-            return "yellow"
-        elif latency_ms < 200:
-            return "orange1"
-        else:
-            return "red"
-
     def _render_problems(self) -> list[str]:
         """Get list of current problems across all endpoints."""
         problems = []
@@ -180,7 +181,7 @@ class Dashboard:
             screen=False,
         )
 
-        def on_result(endpoint: Endpoint, result):
+        def on_result(endpoint: Endpoint, result: CheckResult) -> None:
             live.update(self.render())
 
         self.orchestrator.on_result = on_result
@@ -191,8 +192,10 @@ class Dashboard:
 
         # Keep running until interrupted
         try:
+            import asyncio
+
             while True:
-                await self.orchestrator._task
+                await asyncio.sleep(1)
         except KeyboardInterrupt:
             # Suppress KeyboardInterrupt output
             pass

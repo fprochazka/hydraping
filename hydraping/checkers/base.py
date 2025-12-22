@@ -28,6 +28,10 @@ class BaseChecker(ABC):
         protocol: str | None = None,
     ) -> CheckResult:
         """Helper to create a CheckResult."""
+        # Ensure latency is non-negative (protect against clock issues)
+        if latency_ms is not None and latency_ms < 0:
+            latency_ms = 0.0
+
         return CheckResult(
             timestamp=datetime.now(),
             check_type=check_type,

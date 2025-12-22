@@ -143,7 +143,10 @@ class DomainEndpoint(Endpoint):
         return self.domain
 
     def get_check_types(self) -> list[CheckType]:
-        """Return list of check types applicable to this endpoint."""
+        """Return list of check types applicable to this endpoint.
+
+        Note: TCP checks may run multiple times on different ports (80, 443).
+        """
         return [CheckType.DNS, CheckType.ICMP, CheckType.TCP]
 
 

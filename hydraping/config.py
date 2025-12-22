@@ -18,7 +18,7 @@ class DNSConfig:
 class ChecksConfig:
     """General checks configuration."""
 
-    interval_seconds: float = 1.0
+    interval_seconds: float = 5.0
     timeout_seconds: float = 5.0
 
 
@@ -26,7 +26,7 @@ class ChecksConfig:
 class UIConfig:
     """UI display configuration."""
 
-    graph_width: int = 60
+    graph_width: int = 0  # 0 means auto-size to terminal width
 
 
 @dataclass
@@ -60,6 +60,9 @@ class Config:
 
         endpoints = [Endpoint.parse(ep) for ep in endpoint_strs]
 
+        if not endpoints:
+            raise ValueError("No valid endpoints after parsing")
+
         # Parse DNS config
         dns_data = data.get("dns", {})
         dns = DNSConfig(custom_servers=dns_data.get("custom_servers", []))
@@ -67,9 +70,21 @@ class Config:
         # Parse checks config
         checks_data = data.get("checks", {})
         checks = ChecksConfig(
-            interval_seconds=checks_data.get("interval_seconds", 1.0),
+            interval_seconds=checks_data.get("interval_seconds", 5.0),
             timeout_seconds=checks_data.get("timeout_seconds", 5.0),
         )
+
+        # Validate timeout doesn't exceed interval
+        if checks.timeout_seconds >= checks.interval_seconds:
+            import warnings
+
+            warnings.warn(
+                f"timeout_seconds ({checks.timeout_seconds}s) should be less than "
+                f"interval_seconds ({checks.interval_seconds}s) to avoid overlapping checks. "
+                "This may lead to resource issues.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         # Parse UI config
         ui_data = data.get("ui", {})
