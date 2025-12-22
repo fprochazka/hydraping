@@ -112,8 +112,10 @@ def create_default_config(config_path: Path | None = None) -> Path:
 [endpoints]
 # List of endpoints to monitor
 # Supported formats:
-#   - IP address: "8.8.8.8"
-#   - IP:port: "1.1.1.1:53"
+#   - IPv4 address: "8.8.8.8"
+#   - IPv6 address: "2001:4860:4860::8888"
+#   - IPv4:port: "1.1.1.1:53"
+#   - IPv6:port: "[2001:4860:4860::8888]:53" (note the brackets)
 #   - Domain: "google.com"
 #   - HTTP/HTTPS URL: "https://example.com/health"
 targets = [

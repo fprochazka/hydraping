@@ -6,7 +6,8 @@ Multi-protocol connection tester with live terminal UI - Because it has many "he
 
 - **Multi-protocol checks**: ICMP ping, DNS resolution, TCP port connectivity, HTTP/HTTPS requests
 - **Live terminal UI**: Real-time updating display with latency graphs
-- **Flexible endpoint support**: Check IPs, domains, ports, and HTTP endpoints
+- **Flexible endpoint support**: Check IPv4/IPv6 addresses, domains, ports, and HTTP endpoints
+- **IPv6 support**: Full support for IPv6 addresses with bracket notation for ports
 - **Configuration file**: Store your endpoints in `~/.config/hydraping/settings.toml`
 - **Async architecture**: Efficiently monitors multiple endpoints concurrently
 - **Smart error handling**: Only shows relevant problems based on check hierarchy
@@ -96,8 +97,10 @@ graph_width = 0  # Auto-size to terminal width
 ```
 
 Supported endpoint formats:
-- **IP address**: `8.8.8.8` → ICMP ping only
-- **IP:port**: `1.1.1.1:53` → ICMP + TCP port check
+- **IPv4 address**: `8.8.8.8` → ICMP ping only
+- **IPv6 address**: `2001:4860:4860::8888` → ICMP ping only
+- **IPv4:port**: `1.1.1.1:53` → ICMP + TCP port check
+- **IPv6:port**: `[2001:4860:4860::8888]:53` → ICMP + TCP port check (note the brackets)
 - **Domain**: `google.com` → DNS resolution + ICMP + TCP (ports 80/443)
 - **HTTP/HTTPS**: `https://example.com/` → Full stack (DNS + ICMP + TCP + HTTP request)
 
@@ -120,8 +123,8 @@ pytest
 
 For each endpoint, HydraPing runs applicable checks based on the endpoint type:
 
-- **IP addresses** (`8.8.8.8`): ICMP only
-- **IP:port** (`1.1.1.1:53`): ICMP + TCP
+- **IP addresses** (`8.8.8.8`, `2001:4860:4860::8888`): ICMP only (supports both IPv4 and IPv6)
+- **IP:port** (`1.1.1.1:53`, `[2001:4860:4860::8888]:53`): ICMP + TCP
 - **Domains** (`google.com`): DNS + ICMP + TCP (ports 80 and 443)
 - **HTTP/HTTPS URLs**: DNS + ICMP + TCP + HTTP request
 
