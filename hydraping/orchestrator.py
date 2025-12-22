@@ -10,6 +10,7 @@ from hydraping.checkers.icmp import ICMPChecker
 from hydraping.checkers.tcp import TCPChecker
 from hydraping.config import Config
 from hydraping.models import (
+    CHECK_TYPE_PRIORITY,
     CheckResult,
     CheckType,
     DomainEndpoint,
@@ -172,7 +173,7 @@ class CheckOrchestrator:
 
         # Check hierarchy: HTTP > TCP > DNS > ICMP
         # If a higher-level check succeeds, suppress lower-level failures
-        check_hierarchy = [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]
+        check_hierarchy = CHECK_TYPE_PRIORITY
 
         # Find the highest successful check level
         highest_success_level = -1
@@ -187,7 +188,7 @@ class CheckOrchestrator:
             result = self.get_latest_result(endpoint, check_type)
             if result and not result.success:
                 # Skip ICMP unavailable errors (system-wide permission issues)
-                if check_type == CheckType.ICMP and self.icmp_checker._permission_denied:
+                if check_type == CheckType.ICMP and not self.icmp_checker.is_available():
                     continue
 
                 # Skip lower-level failures if a higher-level check succeeded

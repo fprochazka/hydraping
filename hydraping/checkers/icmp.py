@@ -14,6 +14,14 @@ class ICMPChecker(BaseChecker):
         super().__init__(timeout)
         self._permission_denied = False
 
+    def is_available(self) -> bool:
+        """Check if ICMP checks are available (has required permissions).
+
+        Returns:
+            True if ICMP checks can be performed, False if permission denied.
+        """
+        return not self._permission_denied
+
     async def check(self, target: str) -> CheckResult:
         """Perform ICMP ping check."""
         # If we've already detected permission issues, skip silently

@@ -16,6 +16,14 @@ class CheckType(str, Enum):
     HTTP = "http"
 
 
+# Check type priority order (highest to lowest)
+# HTTP is the most comprehensive check (includes DNS, TCP, and application layer)
+# TCP verifies port connectivity (includes DNS and transport layer)
+# DNS verifies name resolution only
+# ICMP is the basic network layer check
+CHECK_TYPE_PRIORITY = [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]
+
+
 class EndpointType(str, Enum):
     """Type of endpoint being checked."""
 
@@ -38,11 +46,15 @@ class CheckResult:
     protocol: str | None = None  # For HTTP checks (http/https)
 
     def __post_init__(self):
-        """Validate the check result."""
-        if self.success and self.latency_ms is None:
-            raise ValueError("Successful check must have latency")
-        if not self.success and self.error_message is None:
-            raise ValueError("Failed check must have error message")
+        """Validate the check result.
+
+        Uses assertions to catch bugs during development without crashing
+        in production. Checkers are trusted internal code.
+        """
+        assert not (self.success and self.latency_ms is None), "Successful check must have latency"
+        assert not (not self.success and self.error_message is None), (
+            "Failed check must have error message"
+        )
 
 
 @dataclass
@@ -78,11 +90,16 @@ class Endpoint:
                 ip_part = endpoint_str[1:bracket_end]
                 port_part = endpoint_str[bracket_end + 2 :]
                 if _is_ip_address(ip_part):
-                    port = int(port_part)
-                    if not (1 <= port <= 65535):
-                        raise ValueError(f"Port {port} out of valid range 1-65535")
-                    return IPPortEndpoint(raw=endpoint_str, ip=ip_part, port=port)
-            except (ValueError, IndexError):
+                    try:
+                        port = int(port_part)
+                    except ValueError:
+                        # Port is not a valid integer, fall through to domain parsing
+                        pass
+                    else:
+                        # Port parsed successfully, now validate it
+                        _validate_port(port)
+                        return IPPortEndpoint(raw=endpoint_str, ip=ip_part, port=port)
+            except IndexError:
                 pass
         elif ":" in endpoint_str and not endpoint_str.count(":") > 1:
             # IPv4 with port (single colon)
@@ -93,11 +110,13 @@ class Endpoint:
                 if _is_ip_address(ip_part):
                     try:
                         port = int(port_part)
-                        if not (1 <= port <= 65535):
-                            raise ValueError(f"Port {port} out of valid range 1-65535")
-                        return IPPortEndpoint(raw=endpoint_str, ip=ip_part, port=port)
                     except ValueError:
+                        # Port is not a valid integer, fall through to domain parsing
                         pass
+                    else:
+                        # Port parsed successfully, now validate it
+                        _validate_port(port)
+                        return IPPortEndpoint(raw=endpoint_str, ip=ip_part, port=port)
 
         # Plain IP address
         if _is_ip_address(endpoint_str):
@@ -219,3 +238,16 @@ def _is_ip_address(s: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _validate_port(port: int) -> None:
+    """Validate port number is in valid range.
+
+    Args:
+        port: Port number to validate
+
+    Raises:
+        ValueError: If port is out of valid range (1-65535)
+    """
+    if not (1 <= port <= 65535):
+        raise ValueError(f"Port {port} out of valid range 1-65535")

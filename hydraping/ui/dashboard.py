@@ -5,7 +5,7 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
-from hydraping.models import CheckType, Endpoint
+from hydraping.models import CHECK_TYPE_PRIORITY, CheckType, Endpoint
 from hydraping.orchestrator import CheckOrchestrator
 from hydraping.ui.constants import get_latency_color
 from hydraping.ui.graph import LatencyGraph
@@ -94,7 +94,7 @@ class Dashboard:
         # Get the highest-priority successful check result for latency display
         # Priority: HTTP > TCP > DNS > ICMP (show the most comprehensive check)
         latency_result = None
-        for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]:
+        for check_type in CHECK_TYPE_PRIORITY:
             result = self.orchestrator.get_latest_result(endpoint, check_type)
             if result and result.success and result.latency_ms is not None:
                 latency_result = result
@@ -102,7 +102,7 @@ class Dashboard:
 
         # If no successful check, show the highest-priority failure
         if not latency_result:
-            for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]:
+            for check_type in CHECK_TYPE_PRIORITY:
                 result = self.orchestrator.get_latest_result(endpoint, check_type)
                 # Skip "unavailable" errors (like ICMP permission issues)
                 if result and (
@@ -163,7 +163,7 @@ class Dashboard:
         icmp_unavailable_shown = False
 
         # Check if ICMP is globally unavailable
-        if self.orchestrator.icmp_checker._permission_denied and not icmp_unavailable_shown:
+        if not self.orchestrator.icmp_checker.is_available() and not icmp_unavailable_shown:
             problems.append("ICMP unavailable (no permissions) - ping checks disabled")
             icmp_unavailable_shown = True
 

@@ -60,14 +60,9 @@ class LatencyGraph:
         end_bucket = current_bucket + 1
 
         # Check type priority (HTTP is highest, ICMP is lowest)
-        from hydraping.models import CheckType
+        from hydraping.models import CHECK_TYPE_PRIORITY
 
-        priority_order = {
-            CheckType.HTTP: 0,
-            CheckType.TCP: 1,
-            CheckType.DNS: 2,
-            CheckType.ICMP: 3,
-        }
+        priority_order = {check_type: i for i, check_type in enumerate(CHECK_TYPE_PRIORITY)}
 
         # Create a dict of results by bucket number
         # Use wall-clock timestamps for accurate bucketing

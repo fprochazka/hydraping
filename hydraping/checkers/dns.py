@@ -30,16 +30,22 @@ class DNSChecker(BaseChecker):
                 resolver.nameservers = self.nameservers
 
             # Measure resolution time
+            # Try A (IPv4) records first, fall back to AAAA (IPv6) if no answer
             start_time = time.perf_counter()
-            answer = await resolver.resolve(target, "A")
+            answer = None
+            try:
+                answer = await resolver.resolve(target, "A")
+            except dns.resolver.NoAnswer:
+                # No IPv4 records, try IPv6
+                answer = await resolver.resolve(target, "AAAA")
             end_time = time.perf_counter()
 
-            # Verify we got at least one A record
+            # Verify we got at least one record
             if not answer or len(answer) == 0:
                 return self._create_result(
                     check_type=CheckType.DNS,
                     success=False,
-                    error_message="No A records returned",
+                    error_message="No A or AAAA records returned",
                 )
 
             latency_ms = (end_time - start_time) * 1000
