@@ -58,8 +58,11 @@ class EndpointResultHistory:
             result: The check result to add
         """
         if self.start_time is None:
+            # Capture both reference times at the same instant
+            # start_time = monotonic time for current bucket calculation
+            # start_timestamp = wall-clock time for result bucket calculation
             self.start_time = time.monotonic()
-            self.start_timestamp = result.timestamp.timestamp()
+            self.start_timestamp = time.time()
         self.results.append(result)
 
     def get_current_result(self) -> "CheckResult | None":
