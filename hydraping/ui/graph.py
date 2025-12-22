@@ -43,6 +43,16 @@ class LatencyGraph:
         start_bucket = max(0, current_bucket - self.width + 1)
         end_bucket = current_bucket + 1
 
+        # Check type priority (HTTP is highest, ICMP is lowest)
+        from hydraping.models import CheckType
+
+        priority_order = {
+            CheckType.HTTP: 0,
+            CheckType.TCP: 1,
+            CheckType.DNS: 2,
+            CheckType.ICMP: 3,
+        }
+
         # Create a dict of results by bucket number
         # Need to convert result timestamps to bucket numbers relative to start_time
         results_by_bucket = {}
@@ -56,13 +66,23 @@ class LatencyGraph:
             elapsed_since_start = timestamp_s - start_timestamp
             bucket = int(elapsed_since_start / interval_seconds)
 
-            # Keep best result per bucket
+            # Keep highest-priority result per bucket (successful or failed)
             if bucket not in results_by_bucket:
                 results_by_bucket[bucket] = result
             else:
-                current_latency = results_by_bucket[bucket].latency_ms or float("inf")
-                new_latency = result.latency_ms or float("inf")
-                if new_latency < current_latency:
+                current_result = results_by_bucket[bucket]
+                # Prefer successful results, then by priority
+                current_priority = priority_order.get(current_result.check_type, 999)
+                new_priority = priority_order.get(result.check_type, 999)
+
+                # Replace if new is better: success over failure, or same state + higher priority
+                should_replace = False
+                if result.success and not current_result.success:
+                    should_replace = True
+                elif result.success == current_result.success and new_priority < current_priority:
+                    should_replace = True
+
+                if should_replace:
                     results_by_bucket[bucket] = result
 
         # Build graph with proper styling per character

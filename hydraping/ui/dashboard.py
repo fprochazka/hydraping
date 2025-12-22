@@ -118,23 +118,17 @@ class Dashboard:
             protocol_str = ""
             latency_style = "dim"
 
-        # Get graph - merge all successful check results across all check types
-        # This ensures we show data as soon as ANY check completes, not just the highest priority
-        all_successful_results = []
+        # Get all check results for this endpoint (both success and failure)
+        # The graph renderer will handle bucketing and priority selection
+        all_results = []
         for check_type in [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]:
             history = self.orchestrator.get_history(endpoint, check_type)
             if history:
-                # Collect all successful results
-                all_successful_results.extend([r for r in history if r.success])
-
-        # Deduplicate by time interval - keeps best result per bucket across all check types
-        graph_history = self._deduplicate_by_interval(
-            all_successful_results, self.orchestrator.config.checks.interval_seconds
-        )
+                all_results.extend(history)
 
         graph_renderer = self.graphs[endpoint.raw]
         graph_text = graph_renderer.render(
-            graph_history,
+            all_results,
             self.orchestrator.start_time,
             self.orchestrator.config.checks.interval_seconds,
         )
@@ -146,46 +140,6 @@ class Dashboard:
             Text(time_str, style=latency_style),
             Text(protocol_str, style="dim"),
         )
-
-    def _deduplicate_by_interval(self, results: list, interval_seconds: float) -> list:
-        """
-        Deduplicate results by time interval, keeping the highest-priority result per interval.
-
-        When multiple checks run in the same interval, prefer higher-priority checks
-        (HTTP > TCP > DNS > ICMP) to match what the latency column shows.
-        """
-        if not results:
-            return []
-
-        # Check type priority (HTTP is highest, ICMP is lowest)
-        priority_order = {
-            CheckType.HTTP: 0,
-            CheckType.TCP: 1,
-            CheckType.DNS: 2,
-            CheckType.ICMP: 3,
-        }
-
-        # Group results by time bucket (use interval in seconds for consistent bucketing)
-        buckets = {}
-
-        for result in results:
-            # Calculate which time bucket this result belongs to
-            # Use floor division to get consistent buckets aligned to interval
-            timestamp_s = result.timestamp.timestamp()
-            bucket = int(timestamp_s / interval_seconds)
-
-            # Keep the highest-priority result per bucket
-            if bucket not in buckets:
-                buckets[bucket] = result
-            else:
-                current_priority = priority_order.get(buckets[bucket].check_type, 999)
-                new_priority = priority_order.get(result.check_type, 999)
-                if new_priority < current_priority:
-                    buckets[bucket] = result
-
-        # Sort by bucket number (chronological order)
-        deduplicated = [buckets[k] for k in sorted(buckets.keys())]
-        return deduplicated
 
     def _get_latency_color(self, latency_ms: float) -> str:
         """Get color for latency value (matching graph color zones)."""
