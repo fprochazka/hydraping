@@ -62,7 +62,7 @@ class Dashboard:
 
     def render(self) -> Group:
         """Render the current state as a Rich group."""
-        table = Table(show_header=False, box=None, padding=(0, 1), overflow="ignore")
+        table = Table(show_header=False, box=None, padding=(0, 1))
 
         # Add columns with fixed widths
         table.add_column("Endpoint", width=self.endpoint_width, no_wrap=True)

@@ -16,9 +16,10 @@ from hydraping.ui.constants import (
 class LatencyGraph:
     """Renders latency history as a graph."""
 
-    # Unicode block characters for graph bars (from empty to full)
-    BLOCKS = ["·", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
-    EMPTY_CHAR = "·"  # Character for empty/padding areas
+    # Single-width ASCII characters for graph bars (from empty to full)
+    # Using only ASCII characters that are guaranteed to be exactly 1 cell wide
+    BLOCKS = [".", "_", "-", "=", "+", "*", "#", "@", "M"]
+    EMPTY_CHAR = "."  # Character for empty/padding areas
 
     # Latency thresholds for height calculation (in ms)
     MAX_LATENCY_FOR_GRAPH = 500.0  # Anything above this is max height
@@ -129,17 +130,6 @@ class LatencyGraph:
             else:
                 # Failed check - use red exclamation mark
                 graph_text.append("!", style="red")
-
-        # Ensure we rendered exactly the expected width
-        actual_length = len(graph_text.plain)
-        if actual_length != self.width:
-            # This shouldn't happen, but log it if it does
-            import sys
-
-            print(
-                f"WARNING: Graph width mismatch: expected {self.width}, got {actual_length}",
-                file=sys.stderr,
-            )
 
         return graph_text
 
