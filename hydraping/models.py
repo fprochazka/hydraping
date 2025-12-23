@@ -3,7 +3,7 @@
 import ipaddress
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from urllib.parse import urlparse
@@ -320,7 +320,7 @@ class Endpoint:
     """Base class for network endpoints to check."""
 
     raw: str
-    custom_name: str | None = None
+    custom_name: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self):
         """Initialize endpoint type - to be overridden by subclasses."""
