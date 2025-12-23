@@ -44,6 +44,7 @@ class EndpointResultHistory:
         max_capacity: int = 2400,
         start_time: float | None = None,
         start_timestamp: float | None = None,
+        primary_check_type: "CheckType | None" = None,
     ):
         """Initialize result history.
 
@@ -52,11 +53,13 @@ class EndpointResultHistory:
             max_capacity: Maximum number of results to keep in history
             start_time: Optional shared monotonic time (synchronizes endpoint buckets)
             start_timestamp: Optional shared wall-clock time (synchronizes endpoint buckets)
+            primary_check_type: Optional check type to filter for graph/latency display
         """
         self.interval_seconds = interval_seconds
         self.results: deque[CheckResult] = deque(maxlen=max_capacity)
         self.start_time = start_time  # Monotonic time for bucket calculation
         self.start_timestamp = start_timestamp  # Wall-clock time for result bucketing
+        self.primary_check_type = primary_check_type  # Filter for graph/latency
         self._priority_order = {check_type: i for i, check_type in enumerate(CHECK_TYPE_PRIORITY)}
 
     def add_result(self, result: "CheckResult") -> None:
@@ -77,8 +80,8 @@ class EndpointResultHistory:
         """Get the result for the current time bucket.
 
         This is what should be displayed "now" - the highest-priority result
-        in the current time bucket. Uses check type hierarchy to select the
-        best result when multiple checks completed in the same bucket.
+        in the current time bucket. If primary_check_type is set, only results
+        of that type are considered (for graph/latency display).
 
         For better UX, if the current bucket has no data yet (new interval just
         started), falls back to the previous bucket so the latency doesn't
@@ -100,6 +103,10 @@ class EndpointResultHistory:
         current_bucket_result = None
 
         for result in self.results:
+            # Filter by primary check type if set
+            if self.primary_check_type and result.check_type != self.primary_check_type:
+                continue
+
             timestamp_s = result.timestamp.timestamp()
             elapsed_since_start = timestamp_s - self.start_timestamp
             bucket = int(elapsed_since_start / self.interval_seconds)
@@ -119,6 +126,10 @@ class EndpointResultHistory:
         if current_bucket_result is None and current_bucket > 0:
             previous_bucket = current_bucket - 1
             for result in self.results:
+                # Filter by primary check type if set
+                if self.primary_check_type and result.check_type != self.primary_check_type:
+                    continue
+
                 timestamp_s = result.timestamp.timestamp()
                 elapsed_since_start = timestamp_s - self.start_timestamp
                 bucket = int(elapsed_since_start / self.interval_seconds)
@@ -155,6 +166,8 @@ class EndpointResultHistory:
         represents a time bucket from oldest to newest. Each element is
         either a CheckResult or None (no data for that bucket).
 
+        If primary_check_type is set, only results of that type are included.
+
         Args:
             num_buckets: Number of recent buckets to return
 
@@ -178,6 +191,10 @@ class EndpointResultHistory:
         results_by_bucket: dict[int, CheckResult] = {}
 
         for result in self.results:
+            # Filter by primary check type if set
+            if self.primary_check_type and result.check_type != self.primary_check_type:
+                continue
+
             timestamp_s = result.timestamp.timestamp()
             elapsed_since_start = timestamp_s - self.start_timestamp
             bucket = int(elapsed_since_start / self.interval_seconds)
@@ -381,6 +398,10 @@ class IPEndpoint(Endpoint):
         """Return list of check types applicable to this endpoint."""
         return [CheckType.ICMP]
 
+    def get_primary_check_type(self) -> CheckType:
+        """Return the primary check type to display in graph/latency."""
+        return CheckType.ICMP
+
 
 @dataclass
 class IPPortEndpoint(Endpoint):
@@ -401,6 +422,10 @@ class IPPortEndpoint(Endpoint):
     def get_check_types(self) -> list[CheckType]:
         """Return list of check types applicable to this endpoint."""
         return [CheckType.ICMP, CheckType.TCP]
+
+    def get_primary_check_type(self) -> CheckType:
+        """Return the primary check type to display in graph/latency."""
+        return CheckType.TCP
 
 
 @dataclass
@@ -427,6 +452,10 @@ class DomainEndpoint(Endpoint):
         Note: TCP checks may run multiple times on different ports (80, 443).
         """
         return [CheckType.DNS, CheckType.ICMP, CheckType.TCP]
+
+    def get_primary_check_type(self) -> CheckType:
+        """Return the primary check type to display in graph/latency."""
+        return CheckType.TCP
 
 
 @dataclass
@@ -470,6 +499,10 @@ class HTTPEndpoint(Endpoint):
     def get_check_types(self) -> list[CheckType]:
         """Return list of check types applicable to this endpoint."""
         return [CheckType.DNS, CheckType.ICMP, CheckType.TCP, CheckType.HTTP]
+
+    def get_primary_check_type(self) -> CheckType:
+        """Return the primary check type to display in graph/latency."""
+        return CheckType.HTTP
 
 
 def _is_ip_address(s: str) -> bool:

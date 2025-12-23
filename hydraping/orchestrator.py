@@ -175,6 +175,7 @@ class CheckOrchestrator:
                 max_capacity=self.history_capacity,
                 start_time=self.start_time,
                 start_timestamp=self.start_timestamp,
+                primary_check_type=endpoint.get_primary_check_type(),
             )
         self.history[endpoint.raw].add_result(result)
 
