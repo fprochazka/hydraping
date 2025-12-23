@@ -159,8 +159,18 @@ class CheckOrchestrator:
 
     async def _check_icmp(self, endpoint: Endpoint, target: str, iteration_timestamp: datetime):
         """Run ICMP check and store result."""
-        result = await self.icmp_checker.check(target, iteration_timestamp)
-        self._store_result(endpoint, result)
+        try:
+            result = await self.icmp_checker.check(target, iteration_timestamp)
+            self._store_result(endpoint, result)
+        except Exception as e:
+            # Defensive: ensure we always store a result, even on unexpected errors
+            result = CheckResult(
+                timestamp=iteration_timestamp,
+                check_type=CheckType.ICMP,
+                success=False,
+                error_message=f"Unexpected error: {e}",
+            )
+            self._store_result(endpoint, result)
 
     async def _check_dns(
         self,
@@ -170,27 +180,69 @@ class CheckOrchestrator:
         ip_version: int | None = None,
     ):
         """Run DNS check and store result."""
-        result = await self.dns_checker.check(target, iteration_timestamp, ip_version)
-        self._store_result(endpoint, result)
+        try:
+            result = await self.dns_checker.check(target, iteration_timestamp, ip_version)
+            self._store_result(endpoint, result)
+        except Exception as e:
+            # Defensive: ensure we always store a result, even on unexpected errors
+            result = CheckResult(
+                timestamp=iteration_timestamp,
+                check_type=CheckType.DNS,
+                success=False,
+                error_message=f"Unexpected error: {e}",
+            )
+            self._store_result(endpoint, result)
 
     async def _check_tcp(
         self, endpoint: Endpoint, host: str, port: int, iteration_timestamp: datetime
     ):
         """Run TCP check and store result."""
-        result = await self.tcp_checker.check(host, port, iteration_timestamp)
-        self._store_result(endpoint, result)
+        try:
+            result = await self.tcp_checker.check(host, port, iteration_timestamp)
+            self._store_result(endpoint, result)
+        except Exception as e:
+            # Defensive: ensure we always store a result, even on unexpected errors
+            result = CheckResult(
+                timestamp=iteration_timestamp,
+                check_type=CheckType.TCP,
+                success=False,
+                error_message=f"Unexpected error: {e}",
+                port=port,
+            )
+            self._store_result(endpoint, result)
 
     async def _check_udp(
         self, endpoint: Endpoint, host: str, port: int, iteration_timestamp: datetime
     ):
         """Run UDP check and store result."""
-        result = await self.udp_checker.check(host, port, iteration_timestamp)
-        self._store_result(endpoint, result)
+        try:
+            result = await self.udp_checker.check(host, port, iteration_timestamp)
+            self._store_result(endpoint, result)
+        except Exception as e:
+            # Defensive: ensure we always store a result, even on unexpected errors
+            result = CheckResult(
+                timestamp=iteration_timestamp,
+                check_type=CheckType.UDP,
+                success=False,
+                error_message=f"Unexpected error: {e}",
+                port=port,
+            )
+            self._store_result(endpoint, result)
 
     async def _check_http(self, endpoint: Endpoint, url: str, iteration_timestamp: datetime):
         """Run HTTP check and store result."""
-        result = await self.http_checker.check(url, iteration_timestamp)
-        self._store_result(endpoint, result)
+        try:
+            result = await self.http_checker.check(url, iteration_timestamp)
+            self._store_result(endpoint, result)
+        except Exception as e:
+            # Defensive: ensure we always store a result, even on unexpected errors
+            result = CheckResult(
+                timestamp=iteration_timestamp,
+                check_type=CheckType.HTTP,
+                success=False,
+                error_message=f"Unexpected error: {e}",
+            )
+            self._store_result(endpoint, result)
 
     def _store_result(self, endpoint: Endpoint, result: CheckResult):
         """Store result in history."""
