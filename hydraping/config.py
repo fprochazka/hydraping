@@ -54,11 +54,31 @@ class Config:
             data = tomllib.load(f)
 
         # Parse endpoints
-        endpoint_strs = data.get("endpoints", {}).get("targets", [])
-        if not endpoint_strs:
+        endpoint_configs = data.get("endpoints", {}).get("targets", [])
+        if not endpoint_configs:
             raise ValueError("No endpoints configured in 'endpoints.targets'")
 
-        endpoints = [Endpoint.parse(ep) for ep in endpoint_strs]
+        endpoints = []
+        for ep_config in endpoint_configs:
+            if isinstance(ep_config, str):
+                # Simple string format - use URL as display name
+                endpoint = Endpoint.parse(ep_config)
+            elif isinstance(ep_config, dict):
+                # Object format with optional custom name
+                url = ep_config.get("url")
+                if not url:
+                    raise ValueError(f"Endpoint object missing 'url' field: {ep_config}")
+                endpoint = Endpoint.parse(url)
+                # Set custom name if provided
+                custom_name = ep_config.get("name")
+                if custom_name:
+                    endpoint.custom_name = custom_name
+            else:
+                raise ValueError(
+                    f"Invalid endpoint format: {ep_config}. "
+                    "Expected string or object with 'url' field."
+                )
+            endpoints.append(endpoint)
 
         if not endpoints:
             raise ValueError("No valid endpoints after parsing")
@@ -112,6 +132,10 @@ def create_default_config(config_path: Path | None = None) -> Path:
 [endpoints]
 # List of endpoints to monitor
 # Supported formats:
+#   - Simple string: "8.8.8.8", "google.com", "https://example.com/"
+#   - With custom name: { url = "8.8.8.8", name = "Google DNS" }
+#
+# Endpoint types:
 #   - IPv4 address: "8.8.8.8"
 #   - IPv6 address: "2001:4860:4860::8888"
 #   - IPv4:port: "1.1.1.1:53"
@@ -119,8 +143,8 @@ def create_default_config(config_path: Path | None = None) -> Path:
 #   - Domain: "google.com"
 #   - HTTP/HTTPS URL: "https://example.com/health"
 targets = [
-    "8.8.8.8",
-    "1.1.1.1",
+    { url = "1.1.1.1", name = "Cloudflare DNS" },
+    { url = "8.8.8.8", name = "Google DNS" },
     "google.com",
 ]
 

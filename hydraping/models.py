@@ -320,6 +320,7 @@ class Endpoint:
     """Base class for network endpoints to check."""
 
     raw: str
+    custom_name: str | None = None
 
     def __post_init__(self):
         """Initialize endpoint type - to be overridden by subclasses."""
@@ -329,6 +330,9 @@ class Endpoint:
     @property
     def display_name(self) -> str:
         """Human-readable name for display in UI."""
+        # Use custom name if provided, otherwise use default formatting
+        if self.custom_name:
+            return self.custom_name
         return self.raw
 
     @staticmethod
@@ -417,6 +421,8 @@ class IPPortEndpoint(Endpoint):
     @property
     def display_name(self) -> str:
         """Human-readable name for display in UI."""
+        if self.custom_name:
+            return self.custom_name
         return f"{self.ip}:{self.port}"
 
     def get_check_types(self) -> list[CheckType]:
@@ -442,6 +448,8 @@ class DomainEndpoint(Endpoint):
     @property
     def display_name(self) -> str:
         """Human-readable name for display in UI."""
+        if self.custom_name:
+            return self.custom_name
         if self.port != 80:
             return f"{self.domain}:{self.port}"
         return self.domain

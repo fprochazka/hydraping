@@ -55,10 +55,10 @@ hydraping --config /path/to/config.toml
 ### Example Output
 
 ```
-1.1.1.1                      .................................................▁▁▁▁▁▁▁▁▁       8.2ms (ICMP)
-8.8.8.8                      .................................................▁▁▁▁▁▁▁▁▁      12.5ms (ICMP)
+Cloudflare DNS               .................................................▁▁▁▁▁▁▁▁▁       8.2ms (ICMP)
+Google DNS                   .................................................▁▁▁▁▁▁▁▁▁      12.5ms (ICMP)
 google.com                   ..............................................▂▂▁▁▁▁▁▁▁▁▁▁      15.3ms (TCP)
-https://filip-prochazka.com/ ................................................▃▃▄▃▃▃▃▃▃▃     145.7ms (HTTP)
+Production API               ................................................▃▃▄▃▃▃▃▃▃▃     145.7ms (HTTP)
 
 Problems:
   • ICMP unavailable (no permissions) - ping checks disabled
@@ -79,10 +79,15 @@ Example `~/.config/hydraping/settings.toml`:
 ```toml
 [endpoints]
 targets = [
-    "1.1.1.1",
-    "8.8.8.8",
+    # Simple string format (uses URL as display name)
     "google.com",
-    "https://filip-prochazka.com/"
+    "https://example.com/",
+
+    # Object format with custom labels
+    { url = "1.1.1.1", name = "Cloudflare DNS" },
+    { url = "8.8.8.8", name = "Google DNS" },
+    { url = "192.168.1.1", name = "Home Router" },
+    { url = "https://api.example.com/health", name = "Production API" },
 ]
 
 [dns]
