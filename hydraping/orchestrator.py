@@ -8,6 +8,7 @@ from hydraping.checkers.dns import DNSChecker
 from hydraping.checkers.http import HTTPChecker
 from hydraping.checkers.icmp import ICMPChecker
 from hydraping.checkers.tcp import TCPChecker
+from hydraping.checkers.udp import UDPChecker
 from hydraping.config import Config
 from hydraping.models import (
     CHECK_TYPE_PRIORITY,
@@ -19,6 +20,7 @@ from hydraping.models import (
     HTTPEndpoint,
     IPEndpoint,
     IPPortEndpoint,
+    UDPPortEndpoint,
 )
 
 # Maximum expected graph width for history buffer sizing
@@ -40,6 +42,7 @@ class CheckOrchestrator:
             nameservers=config.dns.custom_servers if config.dns.custom_servers else None,
         )
         self.tcp_checker = TCPChecker(timeout=config.checks.timeout_seconds)
+        self.udp_checker = UDPChecker(timeout=config.checks.timeout_seconds)
         self.http_checker = HTTPChecker(timeout=config.checks.timeout_seconds)
 
         # Store results history per endpoint using EndpointResultHistory
@@ -121,9 +124,17 @@ class CheckOrchestrator:
                 self._check_tcp(endpoint, endpoint.ip, endpoint.port, iteration_timestamp)
             )
 
+        elif isinstance(endpoint, UDPPortEndpoint):
+            check_tasks.append(self._check_icmp(endpoint, endpoint.ip, iteration_timestamp))
+            check_tasks.append(
+                self._check_udp(endpoint, endpoint.ip, endpoint.port, iteration_timestamp)
+            )
+
         elif isinstance(endpoint, DomainEndpoint):
             # For domain: DNS, ICMP, and TCP checks (try both HTTP and HTTPS ports)
-            check_tasks.append(self._check_dns(endpoint, endpoint.domain, iteration_timestamp))
+            check_tasks.append(
+                self._check_dns(endpoint, endpoint.domain, iteration_timestamp, endpoint.ip_version)
+            )
             check_tasks.append(self._check_icmp(endpoint, endpoint.domain, iteration_timestamp))
             check_tasks.append(
                 self._check_tcp(endpoint, endpoint.domain, 80, iteration_timestamp)
@@ -134,7 +145,9 @@ class CheckOrchestrator:
 
         elif isinstance(endpoint, HTTPEndpoint):
             # For HTTP endpoint, run DNS, ICMP, TCP, and HTTP
-            check_tasks.append(self._check_dns(endpoint, endpoint.host, iteration_timestamp))
+            check_tasks.append(
+                self._check_dns(endpoint, endpoint.host, iteration_timestamp, endpoint.ip_version)
+            )
             check_tasks.append(self._check_icmp(endpoint, endpoint.host, iteration_timestamp))
             check_tasks.append(
                 self._check_tcp(endpoint, endpoint.host, endpoint.port, iteration_timestamp)
@@ -149,9 +162,15 @@ class CheckOrchestrator:
         result = await self.icmp_checker.check(target, iteration_timestamp)
         self._store_result(endpoint, result)
 
-    async def _check_dns(self, endpoint: Endpoint, target: str, iteration_timestamp: datetime):
+    async def _check_dns(
+        self,
+        endpoint: Endpoint,
+        target: str,
+        iteration_timestamp: datetime,
+        ip_version: int | None = None,
+    ):
         """Run DNS check and store result."""
-        result = await self.dns_checker.check(target, iteration_timestamp)
+        result = await self.dns_checker.check(target, iteration_timestamp, ip_version)
         self._store_result(endpoint, result)
 
     async def _check_tcp(
@@ -159,6 +178,13 @@ class CheckOrchestrator:
     ):
         """Run TCP check and store result."""
         result = await self.tcp_checker.check(host, port, iteration_timestamp)
+        self._store_result(endpoint, result)
+
+    async def _check_udp(
+        self, endpoint: Endpoint, host: str, port: int, iteration_timestamp: datetime
+    ):
+        """Run UDP check and store result."""
+        result = await self.udp_checker.check(host, port, iteration_timestamp)
         self._store_result(endpoint, result)
 
     async def _check_http(self, endpoint: Endpoint, url: str, iteration_timestamp: datetime):

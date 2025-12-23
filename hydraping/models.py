@@ -15,15 +15,16 @@ class CheckType(str, Enum):
     DNS = "dns"
     ICMP = "icmp"
     TCP = "tcp"
+    UDP = "udp"
     HTTP = "http"
 
 
 # Check type priority order (highest to lowest)
 # HTTP is the most comprehensive check (includes DNS, TCP, and application layer)
-# TCP verifies port connectivity (includes DNS and transport layer)
+# TCP/UDP verify port connectivity (includes DNS and transport layer)
 # DNS verifies name resolution only
 # ICMP is the basic network layer check
-CHECK_TYPE_PRIORITY = [CheckType.HTTP, CheckType.TCP, CheckType.DNS, CheckType.ICMP]
+CHECK_TYPE_PRIORITY = [CheckType.HTTP, CheckType.TCP, CheckType.UDP, CheckType.DNS, CheckType.ICMP]
 
 
 class EndpointResultHistory:
@@ -287,6 +288,7 @@ class EndpointType(str, Enum):
 
     IP = "ip"
     IP_PORT = "ip_port"
+    UDP_PORT = "udp_port"
     DOMAIN = "domain"
     HTTP = "http"
 
@@ -321,6 +323,7 @@ class Endpoint:
 
     raw: str
     custom_name: str | None = field(default=None, kw_only=True)
+    ip_version: int | None = field(default=None, kw_only=True)  # 4 or 6
 
     def __post_init__(self):
         """Initialize endpoint type - to be overridden by subclasses."""
@@ -432,6 +435,33 @@ class IPPortEndpoint(Endpoint):
     def get_primary_check_type(self) -> CheckType:
         """Return the primary check type to display in graph/latency."""
         return CheckType.TCP
+
+
+@dataclass
+class UDPPortEndpoint(Endpoint):
+    """IP:port endpoint for UDP - ICMP + UDP checks."""
+
+    ip: str
+    port: int
+
+    def __post_init__(self):
+        """Set endpoint type."""
+        self.endpoint_type = EndpointType.UDP_PORT
+
+    @property
+    def display_name(self) -> str:
+        """Human-readable name for display in UI."""
+        if self.custom_name:
+            return self.custom_name
+        return f"{self.ip}:{self.port} (UDP)"
+
+    def get_check_types(self) -> list[CheckType]:
+        """Return list of check types applicable to this endpoint."""
+        return [CheckType.ICMP, CheckType.UDP]
+
+    def get_primary_check_type(self) -> CheckType:
+        """Return the primary check type to display in graph/latency."""
+        return CheckType.UDP
 
 
 @dataclass

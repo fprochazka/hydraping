@@ -88,6 +88,14 @@ targets = [
     { url = "8.8.8.8", name = "Google DNS" },
     { url = "192.168.1.1", name = "Home Router" },
     { url = "https://api.example.com/health", name = "Production API" },
+
+    # UDP endpoints (must specify protocol = "udp")
+    { url = "1.1.1.1:53", protocol = "udp", name = "Cloudflare DNS (UDP)" },
+    { url = "8.8.8.8:53", protocol = "udp", name = "Google DNS (UDP)" },
+
+    # IPv4/IPv6 preference (force specific IP version)
+    { url = "google.com", ip_version = 4, name = "Google (IPv4 only)" },
+    { url = "google.com", ip_version = 6, name = "Google (IPv6 only)" },
 ]
 
 [dns]
@@ -104,10 +112,12 @@ graph_width = 0  # Auto-size to terminal width
 Supported endpoint formats:
 - **IPv4 address**: `8.8.8.8` → ICMP ping only
 - **IPv6 address**: `2001:4860:4860::8888` → ICMP ping only
-- **IPv4:port**: `1.1.1.1:53` → ICMP + TCP port check
-- **IPv6:port**: `[2001:4860:4860::8888]:53` → ICMP + TCP port check (note the brackets)
+- **IPv4:port (TCP)**: `1.1.1.1:53` → ICMP + TCP port check
+- **IPv6:port (TCP)**: `[2001:4860:4860::8888]:53` → ICMP + TCP port check (note the brackets)
+- **UDP port**: `{ url = "1.1.1.1:53", protocol = "udp" }` → ICMP + UDP port check
 - **Domain**: `google.com` → DNS resolution + ICMP + TCP (ports 80/443)
 - **HTTP/HTTPS**: `https://example.com/` → Full stack (DNS + ICMP + TCP + HTTP request)
+- **IPv4/IPv6 preference**: `{ url = "google.com", ip_version = 4 }` → Force IPv4 or IPv6
 
 ## Development
 

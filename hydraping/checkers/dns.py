@@ -19,8 +19,16 @@ class DNSChecker(BaseChecker):
         super().__init__(timeout)
         self.nameservers = nameservers
 
-    async def check(self, target: str, iteration_timestamp: datetime) -> CheckResult:
-        """Perform DNS resolution check."""
+    async def check(
+        self, target: str, iteration_timestamp: datetime, ip_version: int | None = None
+    ) -> CheckResult:
+        """Perform DNS resolution check.
+
+        Args:
+            target: Domain name to resolve
+            iteration_timestamp: Timestamp for this iteration
+            ip_version: Optional IP version preference (4 or 6)
+        """
         try:
             resolver = dns.asyncresolver.Resolver()
             resolver.timeout = self.timeout
@@ -31,14 +39,24 @@ class DNSChecker(BaseChecker):
                 resolver.nameservers = self.nameservers
 
             # Measure resolution time
-            # Try A (IPv4) records first, fall back to AAAA (IPv6) if no answer
+            # Query based on IP version preference
             start_time = time.perf_counter()
             answer = None
-            try:
+
+            if ip_version == 4:
+                # Only query IPv4
                 answer = await resolver.resolve(target, "A")
-            except dns.resolver.NoAnswer:
-                # No IPv4 records, try IPv6
+            elif ip_version == 6:
+                # Only query IPv6
                 answer = await resolver.resolve(target, "AAAA")
+            else:
+                # Try A (IPv4) records first, fall back to AAAA (IPv6) if no answer
+                try:
+                    answer = await resolver.resolve(target, "A")
+                except dns.resolver.NoAnswer:
+                    # No IPv4 records, try IPv6
+                    answer = await resolver.resolve(target, "AAAA")
+
             end_time = time.perf_counter()
 
             # Verify we got at least one record

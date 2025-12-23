@@ -64,15 +64,59 @@ class Config:
                 # Simple string format - use URL as display name
                 endpoint = Endpoint.parse(ep_config)
             elif isinstance(ep_config, dict):
-                # Object format with optional custom name
+                # Object format with optional custom name, protocol, and IP version
                 url = ep_config.get("url")
                 if not url:
                     raise ValueError(f"Endpoint object missing 'url' field: {ep_config}")
-                endpoint = Endpoint.parse(url)
+
+                # Check if this is a UDP endpoint (protocol field)
+                protocol = ep_config.get("protocol", "tcp").lower()
+                if protocol == "udp":
+                    # Parse as UDP endpoint
+                    # URL format should be "ip:port" for UDP
+                    from hydraping.models import UDPPortEndpoint, _is_ip_address, _validate_port
+
+                    # Parse IP:port
+                    if ":" in url:
+                        parts = url.rsplit(":", 1)
+                        if len(parts) == 2:
+                            ip_part, port_part = parts
+                            # Handle IPv6 bracket notation
+                            if ip_part.startswith("[") and ip_part.endswith("]"):
+                                ip_part = ip_part[1:-1]
+                            if _is_ip_address(ip_part):
+                                try:
+                                    port = int(port_part)
+                                    _validate_port(port)
+                                    endpoint = UDPPortEndpoint(raw=url, ip=ip_part, port=port)
+                                except ValueError as e:
+                                    raise ValueError(f"Invalid UDP port in {url}: {e}") from e
+                            else:
+                                raise ValueError(
+                                    f"UDP endpoints require IP address, got: {ip_part}"
+                                )
+                        else:
+                            raise ValueError(
+                                f"UDP endpoint must be in format 'ip:port', got: {url}"
+                            )
+                    else:
+                        raise ValueError(f"UDP endpoint must include port, got: {url}")
+                else:
+                    # Regular endpoint (TCP/HTTP/ICMP)
+                    endpoint = Endpoint.parse(url)
+
                 # Set custom name if provided
                 custom_name = ep_config.get("name")
                 if custom_name:
                     endpoint.custom_name = custom_name
+
+                # Set IP version preference if provided
+                ip_version = ep_config.get("ip_version")
+                if ip_version is not None:
+                    if ip_version not in (4, 6):
+                        raise ValueError(f"ip_version must be 4 or 6, got: {ip_version}")
+                    endpoint.ip_version = ip_version
+
             else:
                 raise ValueError(
                     f"Invalid endpoint format: {ep_config}. "
@@ -134,12 +178,15 @@ def create_default_config(config_path: Path | None = None) -> Path:
 # Supported formats:
 #   - Simple string: "8.8.8.8", "google.com", "https://example.com/"
 #   - With custom name: { url = "8.8.8.8", name = "Google DNS" }
+#   - UDP endpoint: { url = "1.1.1.1:53", protocol = "udp", name = "Cloudflare DNS (UDP)" }
+#   - IPv4/IPv6 preference: { url = "google.com", ip_version = 4, name = "Google (IPv4)" }
 #
 # Endpoint types:
 #   - IPv4 address: "8.8.8.8"
 #   - IPv6 address: "2001:4860:4860::8888"
-#   - IPv4:port: "1.1.1.1:53"
-#   - IPv6:port: "[2001:4860:4860::8888]:53" (note the brackets)
+#   - IPv4:port (TCP): "1.1.1.1:53"
+#   - IPv6:port (TCP): "[2001:4860:4860::8888]:53" (note the brackets)
+#   - UDP port: { url = "1.1.1.1:53", protocol = "udp" }
 #   - Domain: "google.com"
 #   - HTTP/HTTPS URL: "https://example.com/health"
 targets = [
