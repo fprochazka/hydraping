@@ -13,6 +13,7 @@ class TCPChecker(BaseChecker):
 
     async def check(self, host: str, port: int, iteration_timestamp: datetime) -> CheckResult:
         """Perform TCP connection check."""
+        writer = None
         try:
             # Measure connection time
             start_time = time.perf_counter()
@@ -24,10 +25,6 @@ class TCPChecker(BaseChecker):
 
             end_time = time.perf_counter()
             latency_ms = (end_time - start_time) * 1000
-
-            # Close the connection immediately
-            writer.close()
-            await writer.wait_closed()
 
             return self._create_result(
                 check_type=CheckType.TCP,
@@ -69,3 +66,8 @@ class TCPChecker(BaseChecker):
                 error_message=f"TCP error: {e}",
                 port=port,
             )
+        finally:
+            # Ensure connection is always closed, even if an exception occurred
+            if writer is not None:
+                writer.close()
+                await writer.wait_closed()

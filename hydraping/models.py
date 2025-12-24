@@ -308,13 +308,14 @@ class CheckResult:
     def __post_init__(self):
         """Validate the check result.
 
-        Uses assertions to catch bugs during development without crashing
-        in production. Checkers are trusted internal code.
+        Raises:
+            ValueError: If validation fails (successful check without latency,
+                       or failed check without error message)
         """
-        assert not (self.success and self.latency_ms is None), "Successful check must have latency"
-        assert not (not self.success and self.error_message is None), (
-            "Failed check must have error message"
-        )
+        if self.success and self.latency_ms is None:
+            raise ValueError("Successful check must have latency")
+        if not self.success and self.error_message is None:
+            raise ValueError("Failed check must have error message")
 
 
 @dataclass

@@ -14,8 +14,17 @@ class BaseChecker(ABC):
         self.timeout = timeout
 
     @abstractmethod
-    async def check(self, target: str) -> CheckResult:
-        """Perform the check and return result."""
+    async def check(self, target: str, iteration_timestamp: datetime, **kwargs) -> CheckResult:
+        """Perform the check and return result.
+
+        Args:
+            target: Target to check (IP, domain, URL, etc.)
+            iteration_timestamp: Timestamp for this check iteration
+            **kwargs: Additional checker-specific parameters (port, ip_version, etc.)
+
+        Returns:
+            CheckResult with success status, latency, and error information
+        """
         pass
 
     def _create_result(

@@ -99,20 +99,33 @@ class UDPProbeProtocol(asyncio.DatagramProtocol):
     """Simple UDP protocol that tracks if any response is received."""
 
     def __init__(self):
-        self.response_received_future = asyncio.get_event_loop().create_future()
-        self.response_received = self.response_received_future
+        """Initialize protocol without event loop dependency."""
+        self._response_received_future = None
+
+    @property
+    def response_received(self):
+        """Get or create the response future lazily.
+
+        This avoids calling get_event_loop() during __init__, which can
+        fail or get the wrong loop in Python 3.10+. Instead, we lazily
+        create the future when first accessed, using the running loop.
+        """
+        if self._response_received_future is None:
+            loop = asyncio.get_running_loop()
+            self._response_received_future = loop.create_future()
+        return self._response_received_future
 
     def datagram_received(self, data, addr):
         """Called when a datagram is received."""
-        if not self.response_received_future.done():
-            self.response_received_future.set_result(True)
+        if not self.response_received.done():
+            self.response_received.set_result(True)
 
     def error_received(self, exc):
         """Called when an error is received (e.g., ICMP port unreachable)."""
-        if not self.response_received_future.done():
-            self.response_received_future.set_result(False)
+        if not self.response_received.done():
+            self.response_received.set_result(False)
 
     def connection_lost(self, exc):
         """Called when connection is closed."""
-        if not self.response_received_future.done():
-            self.response_received_future.set_result(False)
+        if not self.response_received.done():
+            self.response_received.set_result(False)

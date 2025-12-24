@@ -32,6 +32,10 @@ class LatencyGraph:
         done by EndpointResultHistory. This method is a pure renderer - it just
         iterates over the provided list and renders each position.
 
+        Missing data points are rendered as:
+        - Dots (·) for empty buckets before first data, after last data, or large gaps (>10)
+        - Exclamation marks (!) for small gaps (≤10 buckets) between data points
+
         Args:
             bucketed_results: List of CheckResult or None, where each position
                             represents a time bucket from oldest to newest.
@@ -40,14 +44,65 @@ class LatencyGraph:
         Returns:
             Text object with properly styled graph
         """
+        # Maximum gap size to show as errors (exclamation marks)
+        # Larger gaps show as dots to avoid walls of exclamation marks
+        MAX_ERROR_GAP_SIZE = 10
+
+        # Find the boundaries of actual data to distinguish gaps from empty space
+        first_data_idx = None
+        last_data_idx = None
+        for i, result in enumerate(bucketed_results):
+            if result is not None:
+                if first_data_idx is None:
+                    first_data_idx = i
+                last_data_idx = i
+
+        # Identify gap regions and their sizes
+        # A gap is a contiguous sequence of None values between data points
+        gap_sizes = {}  # Maps index -> size of gap containing that index
+        if first_data_idx is not None and last_data_idx is not None:
+            i = first_data_idx
+            while i <= last_data_idx:
+                if bucketed_results[i] is None:
+                    # Found start of a gap, measure its size
+                    gap_start = i
+                    gap_size = 0
+                    while i <= last_data_idx and bucketed_results[i] is None:
+                        gap_size += 1
+                        i += 1
+                    # Record gap size for all indices in this gap
+                    for j in range(gap_start, gap_start + gap_size):
+                        gap_sizes[j] = gap_size
+                else:
+                    i += 1
+
         # Build graph with proper styling per character
         graph_text = Text()
 
         # Render each position in the list
-        for result in bucketed_results:
+        for i, result in enumerate(bucketed_results):
             if result is None:
-                # No data for this bucket - show dim dot
-                graph_text.append(self.EMPTY_CHAR, style="dim")
+                # Determine if this is empty space or a gap in monitoring
+                if first_data_idx is None:
+                    # No data at all yet - show dim dot
+                    char, style = self.EMPTY_CHAR, "dim"
+                elif i < first_data_idx:
+                    # Before first data point - show dim dot
+                    char, style = self.EMPTY_CHAR, "dim"
+                elif i > last_data_idx:
+                    # After last data point - show dim dot
+                    char, style = self.EMPTY_CHAR, "dim"
+                else:
+                    # Gap between data points - check size
+                    gap_size = gap_sizes.get(i, 0)
+                    if gap_size <= MAX_ERROR_GAP_SIZE:
+                        # Small gap (≤10 buckets) - show as error
+                        char, style = "!", "red"
+                    else:
+                        # Large gap (>10 buckets) - show as empty space
+                        # This prevents walls of exclamation marks after suspend
+                        char, style = self.EMPTY_CHAR, "dim"
+                graph_text.append(char, style=style)
             elif result.success and result.latency_ms is not None:
                 # Calculate bar height and color based on latency
                 bar, color = self._get_bar_for_latency(result.latency_ms)

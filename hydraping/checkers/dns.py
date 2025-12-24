@@ -55,7 +55,16 @@ class DNSChecker(BaseChecker):
                     answer = await resolver.resolve(target, "A")
                 except dns.resolver.NoAnswer:
                     # No IPv4 records, try IPv6
-                    answer = await resolver.resolve(target, "AAAA")
+                    try:
+                        answer = await resolver.resolve(target, "AAAA")
+                    except dns.resolver.NoAnswer:
+                        # No records at all
+                        return self._create_result(
+                            check_type=CheckType.DNS,
+                            success=False,
+                            timestamp=iteration_timestamp,
+                            error_message="No A or AAAA records found",
+                        )
 
             end_time = time.perf_counter()
 
