@@ -118,6 +118,7 @@ Supported endpoint formats:
 - **IPv6 address**: `2001:4860:4860::8888` → ICMP ping only
 - **IPv4:port (TCP)**: `1.1.1.1:53` → ICMP + TCP port check
 - **IPv6:port (TCP)**: `[2001:4860:4860::8888]:53` → ICMP + TCP port check (note the brackets)
+- **Domain:port (TCP)**: `example.com:8080` → DNS resolution + ICMP + TCP port check
 - **UDP port**: `{ url = "1.1.1.1:53", protocol = "udp" }` → ICMP + UDP port check
 - **Domain**: `google.com` → DNS resolution + ICMP + TCP (ports 80/443)
 - **HTTP/HTTPS**: `https://example.com/` → Full stack (DNS + ICMP + TCP + HTTP request)

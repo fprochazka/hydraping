@@ -54,6 +54,28 @@ class TestEndpointParsing:
         endpoint = Endpoint.parse("google.com")
         assert isinstance(endpoint, DomainEndpoint)
         assert endpoint.domain == "google.com"
+        assert endpoint.port == 80  # Default port
+
+    def test_parse_domain_port(self):
+        """Test parsing domain:port."""
+        endpoint = Endpoint.parse("example.com:8080")
+        assert isinstance(endpoint, DomainEndpoint)
+        assert endpoint.domain == "example.com"
+        assert endpoint.port == 8080
+
+    def test_parse_domain_port_common_ports(self):
+        """Test parsing domain with common ports."""
+        # Port 443
+        endpoint = Endpoint.parse("api.example.com:443")
+        assert isinstance(endpoint, DomainEndpoint)
+        assert endpoint.domain == "api.example.com"
+        assert endpoint.port == 443
+
+        # Port 3000
+        endpoint = Endpoint.parse("localhost:3000")
+        assert isinstance(endpoint, DomainEndpoint)
+        assert endpoint.domain == "localhost"
+        assert endpoint.port == 3000
 
     def test_parse_http_url(self):
         """Test parsing HTTP URL."""
@@ -97,10 +119,49 @@ class TestEndpointDisplayNames:
         endpoint = UDPPortEndpoint(raw="[2001:db8::1]:53", ip="2001:db8::1", port=53)
         assert endpoint.display_name == "[2001:db8::1]:53 (UDP)"
 
+    def test_domain_default_port_display_name(self):
+        """Test domain with default port (80) doesn't show port."""
+        endpoint = DomainEndpoint(raw="example.com", domain="example.com", port=80)
+        assert endpoint.display_name == "example.com"
+
+    def test_domain_custom_port_display_name(self):
+        """Test domain with custom port shows port."""
+        endpoint = DomainEndpoint(raw="example.com:8080", domain="example.com", port=8080)
+        assert endpoint.display_name == "example.com:8080"
+
     def test_custom_name_overrides_default(self):
         """Test custom_name overrides default formatting."""
         endpoint = IPEndpoint(raw="8.8.8.8", ip="8.8.8.8", custom_name="Google DNS")
         assert endpoint.display_name == "Google DNS"
+
+
+class TestPrimaryCheckType:
+    """Test default primary check type selection."""
+
+    def test_ipportendpoint_defaults_to_tcp(self):
+        """Test IPPortEndpoint uses TCP as primary check by default."""
+        endpoint = IPPortEndpoint(raw="1.1.1.1:8080", ip="1.1.1.1", port=8080)
+        assert endpoint.get_primary_check_type() == CheckType.TCP
+
+    def test_domain_default_port_uses_icmp(self):
+        """Test DomainEndpoint with default port (80) uses ICMP as primary."""
+        endpoint = DomainEndpoint(raw="example.com", domain="example.com", port=80)
+        assert endpoint.get_primary_check_type() == CheckType.ICMP
+
+    def test_domain_custom_port_uses_tcp(self):
+        """Test DomainEndpoint with custom port uses TCP as primary."""
+        endpoint = DomainEndpoint(raw="example.com:8080", domain="example.com", port=8080)
+        assert endpoint.get_primary_check_type() == CheckType.TCP
+
+    def test_domain_port_443_uses_tcp(self):
+        """Test DomainEndpoint with port 443 uses TCP as primary."""
+        endpoint = DomainEndpoint(raw="example.com:443", domain="example.com", port=443)
+        assert endpoint.get_primary_check_type() == CheckType.TCP
+
+    def test_httpendpoint_defaults_to_http(self):
+        """Test HTTPEndpoint uses HTTP as primary check by default."""
+        endpoint = HTTPEndpoint.from_string("https://example.com")
+        assert endpoint.get_primary_check_type() == CheckType.HTTP
 
 
 class TestCheckResult:

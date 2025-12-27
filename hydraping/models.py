@@ -372,21 +372,24 @@ class Endpoint:
             except IndexError:
                 pass
         elif ":" in endpoint_str and not endpoint_str.count(":") > 1:
-            # IPv4 with port (single colon)
+            # IPv4:port or domain:port (single colon)
             parts = endpoint_str.split(":")
             if len(parts) == 2:
-                ip_part, port_part = parts
-                # Check if it looks like an IPv4 address
-                if _is_ip_address(ip_part):
-                    try:
-                        port = int(port_part)
-                    except ValueError:
-                        # Port is not a valid integer, fall through to domain parsing
-                        pass
+                host_part, port_part = parts
+                # Try to parse port as integer
+                try:
+                    port = int(port_part)
+                    _validate_port(port)
+                except ValueError:
+                    # Port is not a valid integer, fall through to domain parsing
+                    pass
+                else:
+                    # Port parsed successfully - check if host is IP or domain
+                    if _is_ip_address(host_part):
+                        return IPPortEndpoint(raw=endpoint_str, ip=host_part, port=port)
                     else:
-                        # Port parsed successfully, now validate it
-                        _validate_port(port)
-                        return IPPortEndpoint(raw=endpoint_str, ip=ip_part, port=port)
+                        # Domain with port
+                        return DomainEndpoint(raw=endpoint_str, domain=host_part, port=port)
 
         # Plain IP address
         if _is_ip_address(endpoint_str):
@@ -506,10 +509,17 @@ class DomainEndpoint(Endpoint):
     def get_primary_check_type(self) -> CheckType:
         """Return the primary check type to display in graph/latency.
 
-        Returns ICMP as primary since it uses the DNS-resolved IP for direct
-        connectivity testing, while DNS runs in background to keep IP fresh.
+        Returns TCP as primary when a specific port is specified (not 80),
+        since port specification implies interest in TCP connectivity.
+        For default port (80), returns ICMP for direct connectivity testing.
         """
-        return self.primary_check_type if self.primary_check_type else CheckType.ICMP
+        if self.primary_check_type:
+            return self.primary_check_type
+        # If port is specified (not default 80), use TCP as primary
+        if self.port != 80:
+            return CheckType.TCP
+        # For default port, use ICMP
+        return CheckType.ICMP
 
 
 @dataclass
