@@ -23,15 +23,22 @@ from hydraping.models import (
     UDPPortEndpoint,
 )
 
-# Maximum expected graph width for history buffer sizing
-MAX_GRAPH_WIDTH = 300
+# Default maximum expected graph width for history buffer sizing
+# This is used as a fallback if graph_width is not explicitly set
+DEFAULT_MAX_GRAPH_WIDTH = 300
 
 
 class CheckOrchestrator:
     """Orchestrates all connectivity checks for configured endpoints."""
 
-    def __init__(self, config: Config):
-        """Initialize orchestrator with configuration."""
+    def __init__(self, config: Config, graph_width: int | None = None):
+        """Initialize orchestrator with configuration.
+
+        Args:
+            config: Application configuration
+            graph_width: Optional graph width for calculating history capacity.
+                        If not provided, uses DEFAULT_MAX_GRAPH_WIDTH.
+        """
         self.config = config
         self.endpoints = config.endpoints
 
@@ -47,8 +54,13 @@ class CheckOrchestrator:
 
         # Store results history per endpoint using EndpointResultHistory
         # Each history manages time bucketing, priority selection, and check hierarchy
-        # Capacity: MAX_GRAPH_WIDTH * max_check_types (4) * safety_margin (2) = 2400
-        self.history_capacity = MAX_GRAPH_WIDTH * 4 * 2
+        # Capacity calculation:
+        #   graph_width: Number of buckets displayed in graph
+        #   * 4: Max check types per endpoint (DNS, ICMP, TCP, HTTP)
+        #   * 2: Safety margin for concurrent checks and bucket overlap
+        # The deque will automatically drop oldest results when capacity is reached
+        effective_width = graph_width if graph_width is not None else DEFAULT_MAX_GRAPH_WIDTH
+        self.history_capacity = effective_width * 4 * 2
         self.history: dict[str, EndpointResultHistory] = {}
 
         # Shared time references for all endpoints (set when orchestrator starts)

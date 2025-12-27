@@ -11,7 +11,7 @@ from rich.console import Console
 from hydraping.config import Config, create_default_config, get_default_config_path
 from hydraping.models import Endpoint
 from hydraping.orchestrator import CheckOrchestrator
-from hydraping.ui.dashboard import Dashboard
+from hydraping.ui.dashboard import Dashboard, calculate_graph_width
 
 app = typer.Typer(
     name="hydraping",
@@ -71,9 +71,17 @@ def main(
             console.print(f"[red]Error parsing endpoint: {e}[/red]")
             raise typer.Exit(1) from None
 
-    # Create orchestrator and dashboard
-    orchestrator = CheckOrchestrator(cfg)
-    dashboard = Dashboard(orchestrator)
+    # Calculate graph width for optimal memory usage
+    # This allows the orchestrator to size its history buffer appropriately
+    try:
+        graph_width = calculate_graph_width(cfg.endpoints, console.width, cfg.ui.graph_width)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1) from None
+
+    # Create orchestrator with calculated graph width for memory efficiency
+    orchestrator = CheckOrchestrator(cfg, graph_width=graph_width)
+    dashboard = Dashboard(orchestrator, console=console)
 
     # Run the dashboard
     try:
