@@ -1,6 +1,7 @@
 """CLI interface for HydraPing."""
 
 import asyncio
+from importlib.metadata import version as get_version
 from pathlib import Path
 from typing import Annotated
 
@@ -126,7 +127,11 @@ def init(
 @app.command()
 def version():
     """Show version information."""
-    console.print("hydraping version 0.1.0")
+    try:
+        pkg_version = get_version("hydraping")
+    except Exception:
+        pkg_version = "unknown"
+    console.print(f"hydraping version {pkg_version}")
 
 
 if __name__ == "__main__":
