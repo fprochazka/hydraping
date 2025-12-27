@@ -1,6 +1,6 @@
 # HydraPing
 
-Multi-protocol connection tester with live terminal UI - Because it has many "heads" (DNS, NC, ICMP) looking at many targets.
+Multi-protocol connection tester with live terminal UI - Because it has many "heads" (DNS, ICMP, TCP, UDP, HTTP) looking at many targets.
 
 ## Features
 
