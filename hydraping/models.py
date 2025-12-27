@@ -503,8 +503,12 @@ class DomainEndpoint(Endpoint):
         return [CheckType.DNS, CheckType.ICMP, CheckType.TCP]
 
     def get_primary_check_type(self) -> CheckType:
-        """Return the primary check type to display in graph/latency."""
-        return CheckType.TCP
+        """Return the primary check type to display in graph/latency.
+
+        Returns ICMP as primary since it uses the DNS-resolved IP for direct
+        connectivity testing, while DNS runs in background to keep IP fresh.
+        """
+        return CheckType.ICMP
 
 
 @dataclass

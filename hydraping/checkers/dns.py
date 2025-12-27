@@ -18,6 +18,19 @@ class DNSChecker(BaseChecker):
         """Initialize DNS checker with optional custom nameservers."""
         super().__init__(timeout)
         self.nameservers = nameservers
+        # Cache of last resolved IPs per target
+        self._resolved_ips: dict[str, str] = {}
+
+    def get_last_resolved_ip(self, target: str) -> str | None:
+        """Get the last successfully resolved IP for a target.
+
+        Args:
+            target: The domain name that was resolved
+
+        Returns:
+            The last resolved IP address, or None if never resolved
+        """
+        return self._resolved_ips.get(target)
 
     async def check(
         self, target: str, iteration_timestamp: datetime, ip_version: int | None = None
@@ -81,6 +94,10 @@ class DNSChecker(BaseChecker):
 
             # Extract first IP address from answer for use in ICMP checks
             resolved_ip = str(answer[0]) if answer and len(answer) > 0 else None
+
+            # Cache the resolved IP for this target
+            if resolved_ip:
+                self._resolved_ips[target] = resolved_ip
 
             return self._create_result(
                 check_type=CheckType.DNS,
