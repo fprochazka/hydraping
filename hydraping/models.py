@@ -219,8 +219,10 @@ class EndpointResultHistory:
 
         # Ensure the list is exactly num_buckets long by padding with None on the left
         # This happens when we're early in monitoring (current_bucket < num_buckets - 1)
-        while len(result_list) < num_buckets:
-            result_list.insert(0, None)
+        # Use efficient list concatenation instead of repeated inserts
+        if len(result_list) < num_buckets:
+            padding_needed = num_buckets - len(result_list)
+            result_list = [None] * padding_needed + result_list
 
         return result_list
 
