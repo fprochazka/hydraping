@@ -389,7 +389,9 @@ class Endpoint:
                         return IPPortEndpoint(raw=endpoint_str, ip=host_part, port=port)
                     else:
                         # Domain with port
-                        return DomainEndpoint(raw=endpoint_str, domain=host_part, port=port)
+                        return DomainEndpoint(
+                            raw=endpoint_str, domain=host_part, port=port, port_specified=True
+                        )
 
         # Plain IP address
         if _is_ip_address(endpoint_str):
@@ -485,6 +487,7 @@ class DomainEndpoint(Endpoint):
 
     domain: str
     port: int = 80  # Default to HTTP port
+    port_specified: bool = field(default=False, kw_only=True)  # Was port explicitly set?
 
     def __post_init__(self):
         """Set endpoint type."""
@@ -502,23 +505,24 @@ class DomainEndpoint(Endpoint):
     def get_check_types(self) -> list[CheckType]:
         """Return list of check types applicable to this endpoint.
 
-        Note: TCP checks may run multiple times on different ports (80, 443).
+        Note: For domains without explicit port, TCP checks run on ports 80 and 443.
+        For domains with explicit port, only that port is checked.
         """
         return [CheckType.DNS, CheckType.ICMP, CheckType.TCP]
 
     def get_primary_check_type(self) -> CheckType:
         """Return the primary check type to display in graph/latency.
 
-        Returns TCP as primary when a specific port is specified (not 80),
+        Returns TCP as primary when a port is explicitly specified in the URL,
         since port specification implies interest in TCP connectivity.
-        For default port (80), returns ICMP for direct connectivity testing.
+        For domains without explicit port, returns ICMP for direct connectivity.
         """
         if self.primary_check_type:
             return self.primary_check_type
-        # If port is specified (not default 80), use TCP as primary
-        if self.port != 80:
+        # If port was explicitly specified, use TCP as primary
+        if self.port_specified:
             return CheckType.TCP
-        # For default port, use ICMP
+        # For plain domain without port, use ICMP
         return CheckType.ICMP
 
 

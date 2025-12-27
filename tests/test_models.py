@@ -55,6 +55,7 @@ class TestEndpointParsing:
         assert isinstance(endpoint, DomainEndpoint)
         assert endpoint.domain == "google.com"
         assert endpoint.port == 80  # Default port
+        assert endpoint.port_specified is False
 
     def test_parse_domain_port(self):
         """Test parsing domain:port."""
@@ -62,6 +63,7 @@ class TestEndpointParsing:
         assert isinstance(endpoint, DomainEndpoint)
         assert endpoint.domain == "example.com"
         assert endpoint.port == 8080
+        assert endpoint.port_specified is True
 
     def test_parse_domain_port_common_ports(self):
         """Test parsing domain with common ports."""
@@ -70,12 +72,14 @@ class TestEndpointParsing:
         assert isinstance(endpoint, DomainEndpoint)
         assert endpoint.domain == "api.example.com"
         assert endpoint.port == 443
+        assert endpoint.port_specified is True
 
         # Port 3000
         endpoint = Endpoint.parse("localhost:3000")
         assert isinstance(endpoint, DomainEndpoint)
         assert endpoint.domain == "localhost"
         assert endpoint.port == 3000
+        assert endpoint.port_specified is True
 
     def test_parse_http_url(self):
         """Test parsing HTTP URL."""
@@ -143,19 +147,32 @@ class TestPrimaryCheckType:
         endpoint = IPPortEndpoint(raw="1.1.1.1:8080", ip="1.1.1.1", port=8080)
         assert endpoint.get_primary_check_type() == CheckType.TCP
 
-    def test_domain_default_port_uses_icmp(self):
-        """Test DomainEndpoint with default port (80) uses ICMP as primary."""
-        endpoint = DomainEndpoint(raw="example.com", domain="example.com", port=80)
+    def test_domain_without_explicit_port_uses_icmp(self):
+        """Test DomainEndpoint without explicit port uses ICMP as primary."""
+        endpoint = DomainEndpoint(
+            raw="example.com", domain="example.com", port=80, port_specified=False
+        )
         assert endpoint.get_primary_check_type() == CheckType.ICMP
+
+    def test_domain_explicit_port_80_uses_tcp(self):
+        """Test DomainEndpoint with explicit port 80 uses TCP as primary."""
+        endpoint = DomainEndpoint(
+            raw="example.com:80", domain="example.com", port=80, port_specified=True
+        )
+        assert endpoint.get_primary_check_type() == CheckType.TCP
 
     def test_domain_custom_port_uses_tcp(self):
         """Test DomainEndpoint with custom port uses TCP as primary."""
-        endpoint = DomainEndpoint(raw="example.com:8080", domain="example.com", port=8080)
+        endpoint = DomainEndpoint(
+            raw="example.com:8080", domain="example.com", port=8080, port_specified=True
+        )
         assert endpoint.get_primary_check_type() == CheckType.TCP
 
     def test_domain_port_443_uses_tcp(self):
         """Test DomainEndpoint with port 443 uses TCP as primary."""
-        endpoint = DomainEndpoint(raw="example.com:443", domain="example.com", port=443)
+        endpoint = DomainEndpoint(
+            raw="example.com:443", domain="example.com", port=443, port_specified=True
+        )
         assert endpoint.get_primary_check_type() == CheckType.TCP
 
     def test_httpendpoint_defaults_to_http(self):

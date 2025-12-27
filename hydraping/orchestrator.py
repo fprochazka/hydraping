@@ -155,12 +155,21 @@ class CheckOrchestrator:
             check_tasks.append(self._check_icmp(endpoint, endpoint.domain, iteration_timestamp))
 
             # TCP checks can run in parallel with ICMP
-            check_tasks.append(
-                self._check_tcp(endpoint, endpoint.domain, 80, iteration_timestamp)
-            )  # HTTP
-            check_tasks.append(
-                self._check_tcp(endpoint, endpoint.domain, 443, iteration_timestamp)
-            )  # HTTPS
+            # If port was explicitly specified, only check that port
+            # Otherwise check common ports 80 and 443
+            if endpoint.port_specified:
+                # Explicit port specified - only check that port
+                check_tasks.append(
+                    self._check_tcp(endpoint, endpoint.domain, endpoint.port, iteration_timestamp)
+                )
+            else:
+                # No explicit port - check common HTTP/HTTPS ports
+                check_tasks.append(
+                    self._check_tcp(endpoint, endpoint.domain, 80, iteration_timestamp)
+                )  # HTTP
+                check_tasks.append(
+                    self._check_tcp(endpoint, endpoint.domain, 443, iteration_timestamp)
+                )  # HTTPS
 
         elif isinstance(endpoint, HTTPEndpoint):
             # For HTTP endpoint: DNS first, then ICMP using resolved IP if available
