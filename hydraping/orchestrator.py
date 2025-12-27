@@ -146,11 +146,21 @@ class CheckOrchestrator:
             )
 
         elif isinstance(endpoint, DomainEndpoint):
-            # For domain: DNS, ICMP, and TCP checks (try both HTTP and HTTPS ports)
-            check_tasks.append(
-                self._check_dns(endpoint, endpoint.domain, iteration_timestamp, endpoint.ip_version)
+            # For domain: DNS first, then ICMP using resolved IP
+            # Run DNS check first to get resolved IP
+            dns_result = await self._check_dns(
+                endpoint, endpoint.domain, iteration_timestamp, endpoint.ip_version
             )
-            check_tasks.append(self._check_icmp(endpoint, endpoint.domain, iteration_timestamp))
+
+            # Use resolved IP for ICMP if DNS succeeded, otherwise fall back to domain
+            icmp_target = (
+                dns_result.resolved_ip
+                if dns_result.success and dns_result.resolved_ip
+                else endpoint.domain
+            )
+            check_tasks.append(self._check_icmp(endpoint, icmp_target, iteration_timestamp))
+
+            # TCP checks can run in parallel with ICMP
             check_tasks.append(
                 self._check_tcp(endpoint, endpoint.domain, 80, iteration_timestamp)
             )  # HTTP
@@ -159,18 +169,29 @@ class CheckOrchestrator:
             )  # HTTPS
 
         elif isinstance(endpoint, HTTPEndpoint):
-            # For HTTP endpoint, run DNS, ICMP, TCP, and HTTP
-            check_tasks.append(
-                self._check_dns(endpoint, endpoint.host, iteration_timestamp, endpoint.ip_version)
+            # For HTTP endpoint: DNS first, then ICMP using resolved IP
+            # Run DNS check first to get resolved IP
+            dns_result = await self._check_dns(
+                endpoint, endpoint.host, iteration_timestamp, endpoint.ip_version
             )
-            check_tasks.append(self._check_icmp(endpoint, endpoint.host, iteration_timestamp))
+
+            # Use resolved IP for ICMP if DNS succeeded, otherwise fall back to host
+            icmp_target = (
+                dns_result.resolved_ip
+                if dns_result.success and dns_result.resolved_ip
+                else endpoint.host
+            )
+            check_tasks.append(self._check_icmp(endpoint, icmp_target, iteration_timestamp))
+
+            # TCP and HTTP checks can run in parallel with ICMP
             check_tasks.append(
                 self._check_tcp(endpoint, endpoint.host, endpoint.port, iteration_timestamp)
             )
             check_tasks.append(self._check_http(endpoint, endpoint.url, iteration_timestamp))
 
-        # Run all checks concurrently
-        await asyncio.gather(*check_tasks, return_exceptions=True)
+        # Run remaining checks concurrently
+        if check_tasks:
+            await asyncio.gather(*check_tasks, return_exceptions=True)
 
     async def _check_icmp(self, endpoint: Endpoint, target: str, iteration_timestamp: datetime):
         """Run ICMP check and store result."""
@@ -193,11 +214,16 @@ class CheckOrchestrator:
         target: str,
         iteration_timestamp: datetime,
         ip_version: int | None = None,
-    ):
-        """Run DNS check and store result."""
+    ) -> CheckResult:
+        """Run DNS check, store result, and return it for use in subsequent checks.
+
+        Returns:
+            CheckResult with resolved IP address if successful
+        """
         try:
             result = await self.dns_checker.check(target, iteration_timestamp, ip_version)
             self._store_result(endpoint, result)
+            return result
         except Exception as e:
             # Defensive: ensure we always store a result, even on unexpected errors
             result = CheckResult(
@@ -207,6 +233,7 @@ class CheckOrchestrator:
                 error_message=f"Unexpected error: {e}",
             )
             self._store_result(endpoint, result)
+            return result
 
     async def _check_tcp(
         self, endpoint: Endpoint, host: str, port: int, iteration_timestamp: datetime

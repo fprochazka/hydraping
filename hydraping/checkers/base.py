@@ -36,6 +36,7 @@ class BaseChecker(ABC):
         error_message: str | None = None,
         port: int | None = None,
         protocol: str | None = None,
+        resolved_ip: str | None = None,
     ) -> CheckResult:
         """Helper to create a CheckResult.
 
@@ -47,6 +48,7 @@ class BaseChecker(ABC):
             error_message: Error message if failed
             port: Port number for TCP checks
             protocol: Protocol for HTTP checks
+            resolved_ip: Resolved IP address for DNS checks
 
         Returns:
             CheckResult with the provided values
@@ -63,4 +65,5 @@ class BaseChecker(ABC):
             error_message=error_message,
             port=port,
             protocol=protocol,
+            resolved_ip=resolved_ip,
         )

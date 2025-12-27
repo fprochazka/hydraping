@@ -306,6 +306,7 @@ class CheckResult:
     error_message: str | None = None
     port: int | None = None  # For TCP checks
     protocol: str | None = None  # For HTTP checks (http/https)
+    resolved_ip: str | None = None  # For DNS checks - first resolved IP address
 
     def __post_init__(self):
         """Validate the check result.

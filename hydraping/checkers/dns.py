@@ -79,11 +79,15 @@ class DNSChecker(BaseChecker):
 
             latency_ms = (end_time - start_time) * 1000
 
+            # Extract first IP address from answer for use in ICMP checks
+            resolved_ip = str(answer[0]) if answer and len(answer) > 0 else None
+
             return self._create_result(
                 check_type=CheckType.DNS,
                 success=True,
                 timestamp=iteration_timestamp,
                 latency_ms=latency_ms,
+                resolved_ip=resolved_ip,
             )
 
         except dns.resolver.NXDOMAIN:
