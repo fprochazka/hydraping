@@ -258,7 +258,12 @@ class CheckOrchestrator:
     ):
         """Run UDP check and store result."""
         try:
-            result = await self.udp_checker.check(host, port, iteration_timestamp)
+            # Extract probe_data if this is a UDPPortEndpoint
+            probe_data = b""
+            if isinstance(endpoint, UDPPortEndpoint):
+                probe_data = endpoint.probe_data
+
+            result = await self.udp_checker.check(host, port, iteration_timestamp, probe_data)
             self._store_result(endpoint, result)
         except Exception as e:
             # Defensive: ensure we always store a result, even on unexpected errors

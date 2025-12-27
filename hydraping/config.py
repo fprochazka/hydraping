@@ -89,7 +89,27 @@ class Config:
                                 try:
                                     port = int(port_part)
                                     _validate_port(port)
-                                    endpoint = UDPPortEndpoint(raw=url, ip=ip_part, port=port)
+
+                                    # Parse optional probe_data (hex string or ASCII string)
+                                    probe_data = b""
+                                    probe_hex = ep_config.get("probe_hex")
+                                    probe_ascii = ep_config.get("probe_ascii")
+
+                                    if probe_hex:
+                                        # Parse hex string (e.g., "deadbeef")
+                                        try:
+                                            probe_data = bytes.fromhex(probe_hex)
+                                        except ValueError as e:
+                                            raise ValueError(
+                                                f"Invalid hex probe_hex for {url}: {e}"
+                                            ) from e
+                                    elif probe_ascii:
+                                        # Use ASCII string as-is
+                                        probe_data = probe_ascii.encode("ascii")
+
+                                    endpoint = UDPPortEndpoint(
+                                        raw=url, ip=ip_part, port=port, probe_data=probe_data
+                                    )
                                 except ValueError as e:
                                     raise ValueError(f"Invalid UDP port in {url}: {e}") from e
                             else:
@@ -181,6 +201,8 @@ def create_default_config(config_path: Path | None = None) -> Path:
 #   - Simple string: "8.8.8.8", "google.com", "https://example.com/"
 #   - With custom name: { url = "8.8.8.8", name = "Google DNS" }
 #   - UDP endpoint: { url = "1.1.1.1:53", protocol = "udp", name = "Cloudflare DNS (UDP)" }
+#   - UDP with probe: { url = "1.1.1.1:53", protocol = "udp", probe_hex = "deadbeef" }
+#   - UDP with ASCII:  { url = "1.1.1.1:123", protocol = "udp", probe_ascii = "hello" }
 #   - IPv4/IPv6 preference: { url = "google.com", ip_version = 4, name = "Google (IPv4)" }
 #
 # Endpoint types:

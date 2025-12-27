@@ -450,6 +450,7 @@ class UDPPortEndpoint(Endpoint):
 
     ip: str
     port: int
+    probe_data: bytes = field(default=b"", kw_only=True)  # Custom UDP probe payload
 
     def __post_init__(self):
         """Set endpoint type."""

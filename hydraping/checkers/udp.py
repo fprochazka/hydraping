@@ -11,12 +11,24 @@ from hydraping.models import CheckResult, CheckType
 class UDPChecker(BaseChecker):
     """Checker for UDP port connectivity."""
 
-    async def check(self, host: str, port: int, iteration_timestamp: datetime) -> CheckResult:
+    async def check(
+        self,
+        host: str,
+        port: int,
+        iteration_timestamp: datetime,
+        probe_data: bytes = b"",
+    ) -> CheckResult:
         """Perform UDP connectivity check.
 
-        Sends a simple probe packet and waits for any response.
+        Sends a probe packet and waits for any response.
         Note: Many UDP services require protocol-specific data, so this
         check may not work for all services.
+
+        Args:
+            host: Target host
+            port: Target UDP port
+            iteration_timestamp: Timestamp for this check iteration
+            probe_data: Custom probe payload (default: empty datagram)
         """
         try:
             # Measure round-trip time
@@ -32,9 +44,8 @@ class UDPChecker(BaseChecker):
                 timeout=self.timeout,
             )
 
-            # Send a probe packet (empty datagram)
-            # Some services will respond, others will ignore it
-            transport.sendto(b"")
+            # Send the probe packet (custom payload or empty datagram)
+            transport.sendto(probe_data)
 
             # Wait for response
             try:
