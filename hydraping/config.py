@@ -20,6 +20,7 @@ class ChecksConfig:
 
     interval_seconds: float = 5.0
     timeout_seconds: float = 5.0
+    http_success_status_max: int = 399  # HTTP status codes <= this are considered success
 
 
 @dataclass
@@ -136,6 +137,7 @@ class Config:
         checks = ChecksConfig(
             interval_seconds=checks_data.get("interval_seconds", 5.0),
             timeout_seconds=checks_data.get("timeout_seconds", 5.0),
+            http_success_status_max=checks_data.get("http_success_status_max", 399),
         )
 
         # Validate timeout doesn't exceed interval
@@ -205,6 +207,11 @@ interval_seconds = 5.0
 
 # Timeout for individual checks (in seconds)
 timeout_seconds = 5.0
+
+# Maximum HTTP status code considered successful (default: 399)
+# 399: Accept 2xx and 3xx (redirects) as success
+# 299: Strict mode - only 2xx responses are successful
+http_success_status_max = 399
 
 [ui]
 # Width of the latency graph (in characters)

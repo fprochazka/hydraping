@@ -50,7 +50,10 @@ class CheckOrchestrator:
         )
         self.tcp_checker = TCPChecker(timeout=config.checks.timeout_seconds)
         self.udp_checker = UDPChecker(timeout=config.checks.timeout_seconds)
-        self.http_checker = HTTPChecker(timeout=config.checks.timeout_seconds)
+        self.http_checker = HTTPChecker(
+            timeout=config.checks.timeout_seconds,
+            success_status_max=config.checks.http_success_status_max,
+        )
 
         # Store results history per endpoint using EndpointResultHistory
         # Each history manages time bucketing, priority selection, and check hierarchy

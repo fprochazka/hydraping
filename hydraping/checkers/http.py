@@ -12,6 +12,17 @@ from hydraping.models import CheckResult, CheckType
 class HTTPChecker(BaseChecker):
     """Checker for HTTP/HTTPS requests."""
 
+    def __init__(self, timeout: float = 5.0, success_status_max: int = 399):
+        """Initialize HTTP checker.
+
+        Args:
+            timeout: Request timeout in seconds
+            success_status_max: Maximum HTTP status code considered successful
+                               (default: 399, accepts 2xx and 3xx)
+        """
+        super().__init__(timeout)
+        self.success_status_max = success_status_max
+
     async def check(self, url: str, iteration_timestamp: datetime) -> CheckResult:
         """Perform HTTP request check."""
         # Determine protocol from URL
@@ -30,8 +41,8 @@ class HTTPChecker(BaseChecker):
                     end_time = time.perf_counter()
                     latency_ms = (end_time - start_time) * 1000
 
-                    # Check if status is success (2xx or 3xx)
-                    if response.status < 400:
+                    # Check if status is success based on configured threshold
+                    if response.status <= self.success_status_max:
                         return self._create_result(
                             check_type=CheckType.HTTP,
                             success=True,
