@@ -55,10 +55,10 @@ hydraping --config /path/to/config.toml
 ### Example Output
 
 ```
-Cloudflare DNS               .................................................▁▁▁▁▁▁▁▁▁       8.2ms (ICMP)
-Google DNS                   .................................................▁▁▁▁▁▁▁▁▁      12.5ms (ICMP)
-google.com                   ..............................................▂▂▁▁▁▁▁▁▁▁▁▁      15.3ms (TCP)
-Production API               ................................................▃▃▄▃▃▃▃▃▃▃     145.7ms (HTTP)
+Cloudflare DNS               .........................▁▁▁▁▁▁▁▁▁       8.2ms (ICMP)
+Google DNS                   .........................▁▁▁▁▁▁▁▁▁      12.5ms (ICMP)
+google.com                   ......................▂▂▁▁▁▁▁▁▁▁▁▁      15.3ms (TCP)
+Production API               ........................▃▃▄▃▃▃▃▃▃▃     145.7ms (HTTP)
 
 Problems:
   • ICMP unavailable (no permissions) - ping checks disabled
@@ -123,6 +123,32 @@ Supported endpoint formats:
 - **HTTP/HTTPS**: `https://example.com/` → Full stack (DNS + ICMP + TCP + HTTP request)
 - **IPv4/IPv6 preference**: `{ url = "google.com", ip_version = 4 }` → Force IPv4 or IPv6
 - **Custom primary check**: `{ url = "example.com", primary_check_type = "tcp" }` → Choose which check to display (dns/icmp/tcp/udp/http)
+
+## Troubleshooting
+
+### ICMP Permissions on Linux
+
+ICMP ping checks require raw socket access, which typically needs root privileges. You have two options:
+
+#### Option 1: Grant CAP_NET_RAW capability (recommended for single binary)
+```bash
+sudo setcap cap_net_raw+ep $(which hydraping)
+```
+
+#### Option 2: Configure ping_group_range (recommended for system-wide)
+Allow all users to create ICMP sockets by creating `/etc/sysctl.d/99-ping.conf`:
+
+```bash
+# Create the config file
+echo "net.ipv4.ping_group_range = 0 2147483647" | sudo tee /etc/sysctl.d/99-ping.conf
+
+# Apply the setting
+sudo sysctl -p /etc/sysctl.d/99-ping.conf
+```
+
+This allows any user to send ICMP packets without requiring root or capabilities. The change persists across reboots.
+
+**Note**: If ICMP permissions are not available, HydraPing will automatically disable ping checks and continue monitoring with other available protocols (DNS, TCP, HTTP).
 
 ## Development
 

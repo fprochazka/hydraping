@@ -5,6 +5,18 @@ description = "Multi-protocol connection tester with live terminal UI - DNS, ICM
 authors = ["Filip Procházka"]
 readme = "README.md"
 license = "MIT"
+homepage = "https://github.com/fprochazka/hydraping"
+repository = "https://github.com/fprochazka/hydraping"
+keywords = ["ping", "network", "monitoring", "icmp", "dns", "tcp", "udp", "http", "terminal-ui", "latency"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Topic :: System :: Monitoring",
+    "Topic :: System :: Networking :: Monitoring",
+    "Topic :: Utilities",
+]
 packages = [{include = "hydraping"}]
 
 [tool.poetry.scripts]
