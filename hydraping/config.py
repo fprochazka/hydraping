@@ -4,7 +4,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from hydraping.models import Endpoint
+from hydraping.models import CheckType, Endpoint
 
 
 @dataclass
@@ -138,6 +138,30 @@ class Config:
                         raise ValueError(f"ip_version must be 4 or 6, got: {ip_version}")
                     endpoint.ip_version = ip_version
 
+                # Set primary check type if provided
+                primary_check = ep_config.get("primary_check_type")
+                if primary_check:
+                    # Parse check type from string
+                    try:
+                        check_type = CheckType(primary_check.lower())
+                    except ValueError:
+                        valid_types = ", ".join([ct.value for ct in CheckType])
+                        raise ValueError(
+                            f"Invalid primary_check_type '{primary_check}' for {url}. "
+                            f"Valid values: {valid_types}"
+                        ) from None
+
+                    # Validate the check type is applicable to this endpoint
+                    applicable_checks = endpoint.get_check_types()
+                    if check_type not in applicable_checks:
+                        applicable_str = ", ".join([ct.value for ct in applicable_checks])
+                        raise ValueError(
+                            f"primary_check_type '{primary_check}' is not applicable "
+                            f"to endpoint {url}. This endpoint supports: {applicable_str}"
+                        )
+
+                    endpoint.primary_check_type = check_type
+
             else:
                 raise ValueError(
                     f"Invalid endpoint format: {ep_config}. "
@@ -204,6 +228,7 @@ def create_default_config(config_path: Path | None = None) -> Path:
 #   - UDP with probe: { url = "1.1.1.1:53", protocol = "udp", probe_hex = "deadbeef" }
 #   - UDP with ASCII:  { url = "1.1.1.1:123", protocol = "udp", probe_ascii = "hello" }
 #   - IPv4/IPv6 preference: { url = "google.com", ip_version = 4, name = "Google (IPv4)" }
+#   - Primary check type: { url = "example.com", primary_check_type = "tcp" }
 #
 # Endpoint types:
 #   - IPv4 address: "8.8.8.8"
@@ -213,6 +238,11 @@ def create_default_config(config_path: Path | None = None) -> Path:
 #   - UDP port: { url = "1.1.1.1:53", protocol = "udp" }
 #   - Domain: "google.com"
 #   - HTTP/HTTPS URL: "https://example.com/health"
+#
+# Primary check type (optional):
+#   Override which check is graphed/displayed (dns/icmp/tcp/udp/http)
+#   All checks still run; only affects what's shown in graph and latency column
+#   Useful when ICMP is blocked but you want to monitor TCP/HTTP connectivity
 targets = [
     { url = "1.1.1.1", name = "Cloudflare DNS" },
     { url = "8.8.8.8", name = "Google DNS" },

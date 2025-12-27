@@ -96,6 +96,10 @@ targets = [
     # IPv4/IPv6 preference (force specific IP version)
     { url = "google.com", ip_version = 4, name = "Google (IPv4 only)" },
     { url = "google.com", ip_version = 6, name = "Google (IPv6 only)" },
+
+    # Custom primary check type (choose which check to graph/display)
+    # Useful when ICMP is blocked but you want to monitor TCP connectivity
+    { url = "example.com", primary_check_type = "tcp", name = "Example (TCP primary)" },
 ]
 
 [dns]
@@ -118,6 +122,7 @@ Supported endpoint formats:
 - **Domain**: `google.com` → DNS resolution + ICMP + TCP (ports 80/443)
 - **HTTP/HTTPS**: `https://example.com/` → Full stack (DNS + ICMP + TCP + HTTP request)
 - **IPv4/IPv6 preference**: `{ url = "google.com", ip_version = 4 }` → Force IPv4 or IPv6
+- **Custom primary check**: `{ url = "example.com", primary_check_type = "tcp" }` → Choose which check to display (dns/icmp/tcp/udp/http)
 
 ## Development
 
@@ -143,7 +148,16 @@ For each endpoint, HydraPing runs applicable checks based on the endpoint type:
 - **Domains** (`google.com`): DNS + ICMP + TCP (ports 80 and 443)
 - **HTTP/HTTPS URLs**: DNS + ICMP + TCP + HTTP request
 
-The dashboard displays the highest-priority successful check result. If a higher-level check succeeds (e.g., HTTP), lower-level failures (e.g., ICMP) are suppressed to reduce noise.
+By default, the dashboard displays the highest-priority successful check result (HTTP > TCP/UDP > DNS > ICMP). If a higher-level check succeeds (e.g., HTTP), lower-level failures (e.g., ICMP) are suppressed to reduce noise.
+
+#### Custom Primary Check Type
+
+You can override which check type is displayed in the graph and latency column using `primary_check_type`. This is useful when:
+- ICMP is blocked by firewall (common for many services)
+- You want to monitor a specific layer (e.g., TCP connectivity instead of ICMP)
+- You care more about application-layer health than network-layer connectivity
+
+All applicable checks still run in the background, and failures are reported in the "Problems" section. Only the graph and latency display are affected by the primary check type setting.
 
 ### Architecture
 

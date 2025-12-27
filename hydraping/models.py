@@ -328,6 +328,7 @@ class Endpoint:
     raw: str
     custom_name: str | None = field(default=None, kw_only=True)
     ip_version: int | None = field(default=None, kw_only=True)  # 4 or 6
+    primary_check_type: CheckType | None = field(default=None, kw_only=True)
 
     def __post_init__(self):
         """Initialize endpoint type - to be overridden by subclasses."""
@@ -411,7 +412,7 @@ class IPEndpoint(Endpoint):
 
     def get_primary_check_type(self) -> CheckType:
         """Return the primary check type to display in graph/latency."""
-        return CheckType.ICMP
+        return self.primary_check_type if self.primary_check_type else CheckType.ICMP
 
 
 @dataclass
@@ -441,7 +442,7 @@ class IPPortEndpoint(Endpoint):
 
     def get_primary_check_type(self) -> CheckType:
         """Return the primary check type to display in graph/latency."""
-        return CheckType.TCP
+        return self.primary_check_type if self.primary_check_type else CheckType.TCP
 
 
 @dataclass
@@ -472,7 +473,7 @@ class UDPPortEndpoint(Endpoint):
 
     def get_primary_check_type(self) -> CheckType:
         """Return the primary check type to display in graph/latency."""
-        return CheckType.UDP
+        return self.primary_check_type if self.primary_check_type else CheckType.UDP
 
 
 @dataclass
@@ -508,7 +509,7 @@ class DomainEndpoint(Endpoint):
         Returns ICMP as primary since it uses the DNS-resolved IP for direct
         connectivity testing, while DNS runs in background to keep IP fresh.
         """
-        return CheckType.ICMP
+        return self.primary_check_type if self.primary_check_type else CheckType.ICMP
 
 
 @dataclass
@@ -555,7 +556,7 @@ class HTTPEndpoint(Endpoint):
 
     def get_primary_check_type(self) -> CheckType:
         """Return the primary check type to display in graph/latency."""
-        return CheckType.HTTP
+        return self.primary_check_type if self.primary_check_type else CheckType.HTTP
 
 
 def _is_ip_address(s: str) -> bool:
