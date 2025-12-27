@@ -36,6 +36,9 @@ env/
 # Claude Code
 /.claude/settings.local.json
 
+# HydraPing
+settings.toml
+
 # Testing
 .pytest_cache/
 .coverage
