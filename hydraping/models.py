@@ -429,6 +429,9 @@ class IPPortEndpoint(Endpoint):
         """Human-readable name for display in UI."""
         if self.custom_name:
             return self.custom_name
+        # Use bracket notation for IPv6 addresses for clarity
+        if _is_ipv6_address(self.ip):
+            return f"[{self.ip}]:{self.port}"
         return f"{self.ip}:{self.port}"
 
     def get_check_types(self) -> list[CheckType]:
@@ -456,6 +459,9 @@ class UDPPortEndpoint(Endpoint):
         """Human-readable name for display in UI."""
         if self.custom_name:
             return self.custom_name
+        # Use bracket notation for IPv6 addresses for clarity
+        if _is_ipv6_address(self.ip):
+            return f"[{self.ip}]:{self.port} (UDP)"
         return f"{self.ip}:{self.port} (UDP)"
 
     def get_check_types(self) -> list[CheckType]:
@@ -551,6 +557,15 @@ def _is_ip_address(s: str) -> bool:
     try:
         ipaddress.ip_address(s)
         return True
+    except ValueError:
+        return False
+
+
+def _is_ipv6_address(s: str) -> bool:
+    """Check if string is a valid IPv6 address."""
+    try:
+        addr = ipaddress.ip_address(s)
+        return isinstance(addr, ipaddress.IPv6Address)
     except ValueError:
         return False
 
