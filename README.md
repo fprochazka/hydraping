@@ -26,17 +26,17 @@ Multi-protocol connection tester with live terminal UI - Because it has many "he
 git clone https://github.com/fprochazka/hydraping.git
 cd hydraping
 
-# Install with pipx
-pipx install .
+# Install as a tool with uv
+uv tool install .
 
-# Or install in editable mode for development
-pipx install -e .
+# Or install in editable mode for development (auto-updates on git pull)
+uv tool install -e .
 ```
 
 ### From PyPI (when published)
 
 ```bash
-pipx install hydraping
+uv tool install hydraping
 ```
 
 ## Usage
@@ -155,13 +155,13 @@ This allows any user to send ICMP packets without requiring root or capabilities
 
 ```bash
 # Install with dev dependencies
-poetry install
+uv sync
 
 # Run linter with auto-fix and formatter (after code changes)
-source .venv/bin/activate && ruff check --fix . && ruff format .
+uv run ruff check --fix . && uv run ruff format .
 
 # Run tests
-pytest
+uv run pytest
 ```
 
 ## How It Works
