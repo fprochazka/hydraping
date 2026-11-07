@@ -15,7 +15,7 @@ Multi-protocol connection tester with live terminal UI - Because it has many "he
 ## Requirements
 
 - Python 3.11+
-- **ICMP (ping) checks**: Require root/CAP_NET_RAW privileges on Linux. If not available, ping checks will be automatically disabled with a warning.
+- **ICMP (ping) checks** on Linux: your user's group must be in the `net.ipv4.ping_group_range` sysctl. Ubuntu allows all groups by default. If ICMP is not available, HydraPing disables ping checks and shows a warning. See [ICMP permissions on Linux](#icmp-permissions-on-linux).
 
 ## Installation
 
@@ -127,29 +127,39 @@ Supported endpoint formats:
 
 ## Troubleshooting
 
-### ICMP Permissions on Linux
+### ICMP permissions on Linux
 
-ICMP ping checks require raw socket access, which typically needs root privileges. You have two options:
+HydraPing sends pings through unprivileged ICMP sockets, so it needs neither root nor `CAP_NET_RAW`.
+The kernel allows these sockets only for groups inside the `net.ipv4.ping_group_range` sysctl.
+Ubuntu allows all groups by default through the systemd sysctl defaults.
 
-#### Option 1: Grant CAP_NET_RAW capability (recommended for single binary)
-```bash
-sudo setcap cap_net_raw+ep $(which hydraping)
-```
-
-#### Option 2: Configure ping_group_range (recommended for system-wide)
-Allow all users to create ICMP sockets by creating `/etc/sysctl.d/99-ping.conf`:
+Check the current setting:
 
 ```bash
-# Create the config file
-echo "net.ipv4.ping_group_range = 0 2147483647" | sudo tee /etc/sysctl.d/99-ping.conf
-
-# Apply the setting
-sudo sysctl -p /etc/sysctl.d/99-ping.conf
+sysctl net.ipv4.ping_group_range
 ```
 
-This allows any user to send ICMP packets without requiring root or capabilities. The change persists across reboots.
+The output `net.ipv4.ping_group_range = 0 2147483647` allows all groups. The output `1 0` is an empty range, which allows no group.
 
-**Note**: If ICMP permissions are not available, HydraPing will automatically disable ping checks and continue monitoring with other available protocols (DNS, TCP, HTTP).
+If the range doesn't include your group, allow all groups:
+
+1. Create `/etc/sysctl.d/99-ping.conf`:
+
+   ```bash
+   echo "net.ipv4.ping_group_range = 0 2147483647" | sudo tee /etc/sysctl.d/99-ping.conf
+   ```
+
+2. Apply the setting:
+
+   ```bash
+   sudo sysctl -p /etc/sysctl.d/99-ping.conf
+   ```
+
+The setting persists across reboots.
+
+`setcap cap_net_raw+ep` on the `hydraping` command has no effect: `hydraping` is a Python script, and the kernel ignores file capabilities on scripts.
+
+If ICMP is not available, HydraPing disables ping checks and keeps monitoring with the other checks (DNS, TCP, UDP, HTTP).
 
 ## Development
 
