@@ -37,6 +37,9 @@ class EndpointSnapshot:
     problems: tuple[str, ...]
     # The network interface the kernel routes the endpoint's address through, when known.
     interface: str | None = None
+    # The relay that carried the latest successful Tailscale reply, for example "DERP xyz". None
+    # for a direct path and for every endpoint that is not a Tailscale peer.
+    relay: str | None = None
 
     def primary_layer(self) -> LayerView | None:
         return self.layers.get(self.primary)

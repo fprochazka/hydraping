@@ -324,6 +324,7 @@ class TestCheckTypePriority:
             CheckType.TLS,
             CheckType.TCP,
             CheckType.UDP,
+            CheckType.TAILSCALE,
             CheckType.DNS,
             CheckType.ICMP,
         ]

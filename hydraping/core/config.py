@@ -1,6 +1,7 @@
 """Configuration management for HydraPing."""
 
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -22,6 +23,8 @@ from hydraping.core.models import (
     Endpoint,
     IPEndpoint,
     IPPortEndpoint,
+    TailscalePeerEndpoint,
+    _is_ip_address,
 )
 
 # The format this release reads. A file without ``version`` is the v1 format and gets migrated.
@@ -164,12 +167,19 @@ _ORDINARY_ONLY_KEYS = ("protocol", "ip_version", "probe_hex", "probe_ascii", "in
 def _parse_check_endpoint(ep_config: dict, url: str) -> Endpoint:
     """Parse an endpoint with a ``check`` key, which selects a special measurement."""
     check = ep_config["check"]
-    if check != "dns":
-        raise ValueError(f'Unknown check {check!r} on {url}; the supported check is "dns"')
+    if check not in ("dns", "tailscale"):
+        raise ValueError(
+            f'Unknown check {check!r} on {url}; the supported checks are "dns" and "tailscale"'
+        )
     for key in _ORDINARY_ONLY_KEYS:
         if key in ep_config:
             raise ValueError(f"'{key}' cannot be combined with check = {check!r} on {url}")
+    if check == "tailscale":
+        return _parse_tailscale_endpoint(ep_config, url)
+    return _parse_dns_server_endpoint(ep_config, url)
 
+
+def _parse_dns_server_endpoint(ep_config: dict, url: str) -> DNSServerEndpoint:
     zone = ep_config.get("query")
     if not isinstance(zone, str) or not zone.strip(". "):
         raise ValueError(
@@ -195,6 +205,23 @@ def _parse_check_endpoint(ep_config: dict, url: str) -> Endpoint:
             f"got: {url}"
         )
     return DNSServerEndpoint(raw=url, ip=parsed.ip, port=port, zone=zone, transport=transport)
+
+
+# A peer as ``tailscale ping`` takes it: a name such as "jumpbox" or "jumpbox.example.ts.net", or a
+# Tailscale IPv4 or IPv6 address. No scheme, port, path or leading dash.
+_TAILSCALE_PEER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
+
+
+def _parse_tailscale_endpoint(ep_config: dict, url: str) -> TailscalePeerEndpoint:
+    for key in ("query", "transport"):
+        if key in ep_config:
+            raise ValueError(f'\'{key}\' needs check = "dns", not check = "tailscale", on {url}')
+    if not _TAILSCALE_PEER.match(url) or (":" in url and not _is_ip_address(url)):
+        raise ValueError(
+            f'check = "tailscale" needs a peer name or Tailscale IP as url, '
+            f'for example url = "jumpbox", got: {url}'
+        )
+    return TailscalePeerEndpoint(raw=url, peer=url)
 
 
 def _parse_endpoint(ep_config: object) -> Endpoint:

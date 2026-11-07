@@ -15,7 +15,7 @@ from hydraping.core.snapshot import ChainSnapshot, EndpointSnapshot, EngineSnaps
 from hydraping.tui.constants import get_latency_color
 from hydraping.tui.graph import LatencyGraph
 
-# Fixed columns: "999.9ms" fits in 8 characters, "(TCP:65535)" in 11.
+# Fixed columns: "999.9ms" fits in 8 characters, "(TCP:65535)" and "(TS direct)" in 11.
 LATENCY_TIME_WIDTH = 8
 PROTOCOL_WIDTH = 11
 # The endpoint column is the first to shrink in a narrow terminal. Names cut with "…" stay
@@ -65,6 +65,19 @@ def minimum_terminal_width(names: list[str]) -> int:
 
 def interface_label(interface: str) -> str:
     return f"via {interface}"
+
+
+def route_label(row: EndpointSnapshot) -> str:
+    """Return the text of the interface column: the relay of a relayed Tailscale peer, otherwise
+    the outgoing interface, or nothing when neither is known."""
+    if row.relay:
+        return interface_label(row.relay)
+    return interface_label(row.interface) if row.interface else ""
+
+
+def layer_label(check_type: CheckType) -> str:
+    """Return the short name of a layer for the protocol column."""
+    return "TS" if check_type == CheckType.TAILSCALE else check_type.value.upper()
 
 
 def calculate_column_widths(
@@ -119,9 +132,8 @@ class Dashboard:
         """Render the current state at the console's current width."""
         terminal_width = self.console.size.width
         names = row_names(self.engine.endpoints, self.engine.config.chains)
-        interface_width = max(
-            (len(interface_label(name)) for name in self.engine.interfaces().values()), default=0
-        )
+        route_names = [*self.engine.interfaces().values(), *self.engine.relays().values()]
+        interface_width = max((len(interface_label(name)) for name in route_names), default=0)
         widths = calculate_column_widths(
             names,
             terminal_width,
@@ -188,6 +200,8 @@ class Dashboard:
                 check_label = f"TCP:{current.port}"
             elif current.check_type == CheckType.HTTP and current.protocol:
                 check_label = current.protocol.upper()
+            elif current.check_type == CheckType.TAILSCALE:
+                check_label = "TS relay" if current.relay else "TS direct"
             time_str = f"{current.latency_ms:.1f}ms"
             protocol_str = f"({check_label})"
             latency_style = get_latency_color(current.latency_ms)
@@ -195,7 +209,7 @@ class Dashboard:
             # Name the layer that broke, which for a skipped primary layer is an earlier one.
             failed_layer = current.failed_layer or current.check_type
             time_str = "FAIL"
-            protocol_str = f"({failed_layer.value.upper()})"
+            protocol_str = f"({layer_label(failed_layer)})"
             latency_style = "red"
         else:
             time_str = "N/A"
@@ -213,7 +227,7 @@ class Dashboard:
         if widths.interface:
             # An interface that appeared after the widths were computed is cut by Rich, which is
             # harmless for one frame.
-            cells.append(Text(interface_label(row.interface) if row.interface else "", style="dim"))
+            cells.append(Text(route_label(row), style="dim"))
         table.add_row(*cells)
 
     @staticmethod

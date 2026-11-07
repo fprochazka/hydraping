@@ -13,6 +13,7 @@ from hydraping.core.chains import HopState, current_result, diagnose_chain
 from hydraping.core.checkers.connection import ConnectionChecker, ConnectionTarget, HTTPRequest
 from hydraping.core.checkers.dns import DNSChecker
 from hydraping.core.checkers.icmp import ICMPChecker
+from hydraping.core.checkers.tailscale import TailscaleChecker
 from hydraping.core.checkers.udp import UDPChecker
 from hydraping.core.config import Chain, Config
 from hydraping.core.models import (
@@ -27,6 +28,7 @@ from hydraping.core.models import (
     IPPortEndpoint,
     LayerKey,
     Measurement,
+    TailscalePeerEndpoint,
     UDPPortEndpoint,
     _is_ip_address,
 )
@@ -159,6 +161,7 @@ class Engine:
         self.icmp_checker = ICMPChecker(timeout=checks.timeout_seconds)
         self.udp_checker = UDPChecker(timeout=checks.timeout_seconds)
         self.dns_checker = DNSChecker(timeout=checks.timeout_seconds)
+        self.tailscale_checker = TailscaleChecker(timeout=checks.timeout_seconds)
         # getaddrinfo blocks a thread and cannot be interrupted. On its own executor, stop() can
         # drop it without waiting; on the loop's default executor, asyncio.run() would wait for a
         # hanging system resolver before returning.
@@ -232,6 +235,10 @@ class Engine:
         elif isinstance(endpoint, DNSServerEndpoint):
             schedules.append(schedule(icmp, self._icmp_probe(endpoint.ip)))
             schedules.append(schedule([CheckType.DNS], self._dns_server_probe(endpoint)))
+        elif isinstance(endpoint, TailscalePeerEndpoint):
+            # No ICMP: a peer name is resolved by tailscale itself, not by the system resolver,
+            # and the Tailscale ping already measures the round trip to the peer.
+            schedules.append(schedule([CheckType.TAILSCALE], self._tailscale_probe(endpoint.peer)))
         elif isinstance(endpoint, DomainEndpoint):
             schedules.append(schedule(icmp, self._icmp_probe(endpoint.domain, endpoint.ip_version)))
             # Without a port, the chains for 80 and 443 share the DNS layer (last result wins) and
@@ -309,6 +316,10 @@ class Engine:
             return self._resolved_address(endpoint.domain, endpoint.ip_version)
         if isinstance(endpoint, HTTPEndpoint):
             return self._resolved_address(endpoint.host, endpoint.ip_version)
+        if isinstance(endpoint, TailscalePeerEndpoint):
+            if _is_ip_address(endpoint.peer):
+                return endpoint.peer
+            return self.tailscale_checker.get_last_node_ip(endpoint.peer)
         return None
 
     async def _egress_loop(self) -> None:
@@ -350,6 +361,12 @@ class Engine:
                 endpoint.ip, endpoint.zone, port=endpoint.port, transport=endpoint.transport
             )
             return [measurement]
+
+        return probe
+
+    def _tailscale_probe(self, peer: str) -> Probe:
+        async def probe() -> Sequence[Measurement]:
+            return [await self.tailscale_checker.check(peer)]
 
         return probe
 
@@ -415,6 +432,21 @@ class Engine:
         """Return the known outgoing interface per store index. Thread-safe."""
         with self.store.lock:
             return dict(self._interfaces)
+
+    def relays(self) -> dict[int, str]:
+        """Return the relay of the latest reply per store index, for relayed peers. Thread-safe."""
+        with self.store.lock:
+            relays = {index: self._relay(index) for index in range(len(self.measured))}
+        return {index: relay for index, relay in relays.items() if relay is not None}
+
+    def _relay(self, index: int) -> str | None:
+        """Return the relay that carried the latest Tailscale reply of ``index``, if it succeeded.
+
+        Called with the store lock held.
+        """
+        layer = self.store.endpoints[index].layers.get(LayerKey(CheckType.TAILSCALE))
+        latest = layer.latest if layer is not None else None
+        return latest.relay if latest is not None and latest.success else None
 
     def snapshot(self, columns: int, now: float | None = None) -> EngineSnapshot:
         """Return the state for one frame, with ``columns`` buckets per layer. Thread-safe."""
@@ -521,6 +553,7 @@ class Engine:
             current=latest.get(primary),
             problems=tuple(problems_for(latest, icmp_available)),
             interface=self._interfaces.get(index),
+            relay=self._relay(index),
         )
 
 

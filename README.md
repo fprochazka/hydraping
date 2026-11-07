@@ -60,8 +60,8 @@ hydraping --config /path/to/config.toml
 ```
 Cloudflare DNS               .........................▁▁▁▁▁▁▁▁▁       8.2ms (ICMP)
 Google DNS                   .........................▁▁▁▁▁▁▁▁▁      12.5ms (ICMP)
-google.com                   ......................▂▂▁▁▁▁▁▁▁▁▁▁      15.3ms (TCP)
-Production API               ........................▃▃▄▃▃▃▃▃▃▃     145.7ms (HTTP)
+google.com:443               ......................▂▂▁▁▁▁▁▁▁▁▁▁      15.3ms (TCP:443)
+Production API               ........................▃▃▄▃▃▃▃▃▃▃     145.7ms (HTTPS)
 
 Problems:
   • ICMP unavailable (no permissions) - ping checks disabled
@@ -70,13 +70,13 @@ Problems:
 The display shows:
 - **Endpoint name** - What you're monitoring
 - **Latency graph** - Visual history scrolling right-to-left (color-coded by latency)
-- **Current latency** - Latest measurement with check type (ICMP/DNS/TCP/UDP/TLS/HTTP)
-- **Interface** - The network interface the kernel routes the target through, for example `via tailscale0`, looked up with `ip -j route get` at most once every 5 seconds per address. A name shows it once it has been resolved. An address the kernel has no route to, such as a VPN subnet while the VPN is down, shows `via no route`. The column is left out when the `ip` command (iproute2) is missing or can't look up the route to 127.0.0.1, and in a terminal too narrow for it.
+- **Current latency** - Latest measurement with check type: `ICMP`, `DNS`, `TCP:<port>`, `UDP`, `TLS`, `HTTP` or `HTTPS` for the HTTP layer of an `http` or `https` URL, or `TS direct` and `TS relay` for a Tailscale peer
+- **Interface** - The network interface the kernel routes the target through, for example `via tailscale0`, looked up with `ip -j route get` at most once every 5 seconds per address. A name shows it once it has been resolved. An address the kernel has no route to, such as a VPN subnet while the VPN is down, shows `via no route`. For a Tailscale peer whose reply came through a relay, the column shows the relay instead, for example `via DERP xyz`. The column is left out when the `ip` command (iproute2) is missing or can't look up the route to 127.0.0.1, and in a terminal too narrow for it.
 - **Problems** - Only relevant issues (smart filtering based on check hierarchy)
 
 Graph colors: 🟢 Green (<50ms) · 🟡 Yellow (50-100ms) · 🟠 Orange (100-200ms) · 🔴 Red (>200ms)
 
-A failed column shows the letter of the layer that broke: `D` DNS, `T` TCP, `S` TLS, `H` HTTP. ICMP and UDP failures show `!`. When the displayed layer did not run because an earlier one failed, the column shows the earlier layer's letter, and the latency column shows `FAIL (TCP)` with that layer's name.
+A failed column shows the letter of the layer that broke: `D` DNS, `T` TCP, `S` TLS, `H` HTTP. ICMP, UDP and Tailscale failures show `!`. When the displayed layer did not run because an earlier one failed, the column shows the earlier layer's letter, and the latency column shows `FAIL (TCP)` with that layer's name.
 
 ## Configuration
 
@@ -156,6 +156,7 @@ Supported endpoint formats:
 - **Custom primary check**: `{ url = "example.com", primary_check_type = "tcp" }` → Choose which check to display (dns/icmp/tcp/udp/tls/http)
 - **Any certificate**: `{ url = "https://router.example.internal/", insecure = true }` → Skip certificate verification in the TLS layer (HTTPS only)
 - **DNS resolver**: `{ url = "192.0.2.53", check = "dns", query = "example.com" }` → ICMP + a query for a random name under the zone; see [DNS resolver hops](#dns-resolver-hops)
+- **Tailscale peer**: `{ url = "jumpbox", check = "tailscale" }` → `tailscale ping` latency and whether the path is direct or relayed; see [Tailscale hops](#tailscale-hops)
 
 ### Chains
 
@@ -193,6 +194,24 @@ targets = [
 Each probe asks the server for the A record of a new random name, `hp-<8 random letters>.<zone>`. No cache on the way can hold that name, so the latency covers the whole resolver path: the server, its forwarders, and the authoritative servers of the zone. Any answer counts as success, including NXDOMAIN, because the server did resolve the question. A timeout, SERVFAIL, REFUSED or any other error code is a failure. Queries go over UDP, or over TCP with `transport = "tcp"`.
 
 The server's address is also pinged, so the row has ICMP and DNS layers, and DNS is the one graphed. The keys `protocol`, `ip_version`, `insecure`, `probe_hex` and `probe_ascii` don't apply to a DNS hop and are rejected. It works in `targets` and as a chain hop.
+
+### Tailscale hops
+
+`check = "tailscale"` measures a peer of your tailnet with `tailscale ping`. `url` is the peer's name or Tailscale IP, as `tailscale ping` takes it:
+
+```toml
+[[chains]]
+name = "Company"
+hops = [
+    { url = "1.1.1.1", name = "Internet" },
+    { url = "jumpbox.example.ts.net", check = "tailscale", name = "Jumpbox VPN" },
+    { url = "https://intranet.example.internal/health", name = "Intranet" },
+]
+```
+
+Each probe runs `tailscale ping -c 1 --timeout <timeout_seconds>s <peer>`. The latency is the one `tailscale ping` reports, measured at the Tailscale layer, so a firewall on either host doesn't affect it. The latency column shows `(TS direct)` when the reply came over a direct path between the two hosts, and `(TS relay)` when it came through a relay. For a relayed reply, the interface column names the relay: `via DERP xyz` for Tailscale's relay servers, with the region code, or `via peer relay` for a relay node in your tailnet. A path that stays relayed usually means NAT traversal failed, which costs latency.
+
+A probe fails when the `tailscale` command is missing, when tailscaled isn't running, when the peer doesn't exist, or when no reply comes within the timeout. The problem line says which one. The graph shows `!` for a failed probe. The row has only the Tailscale layer: there is no ICMP, because tailscale resolves the peer name itself. The keys `protocol`, `ip_version`, `insecure`, `probe_hex`, `probe_ascii`, `query` and `transport` don't apply to a Tailscale hop and are rejected.
 
 ## Troubleshooting
 
@@ -242,6 +261,8 @@ uv run ruff check --fix . && uv run ruff format .
 # Run tests
 uv run pytest
 ```
+
+The Tailscale integration test is skipped unless `HYDRAPING_TEST_TAILSCALE_PEER` names a peer of your tailnet to ping, for example `HYDRAPING_TEST_TAILSCALE_PEER=jumpbox uv run pytest`.
 
 ## How It Works
 

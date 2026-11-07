@@ -16,12 +16,14 @@ class CheckType(str, Enum):
     UDP = "udp"
     TLS = "tls"
     HTTP = "http"
+    TAILSCALE = "tailscale"
 
 
 # Check type priority order (highest to lowest)
 # HTTP is the most comprehensive check (includes DNS, TCP, TLS and application layer)
 # TLS verifies the handshake and the certificate (includes DNS and TCP)
 # TCP/UDP verify port connectivity (includes DNS and transport layer)
+# Tailscale verifies that a peer answers through the tailnet, like a transport-level check
 # DNS verifies name resolution only
 # ICMP is the basic network layer check
 CHECK_TYPE_PRIORITY = [
@@ -29,6 +31,7 @@ CHECK_TYPE_PRIORITY = [
     CheckType.TLS,
     CheckType.TCP,
     CheckType.UDP,
+    CheckType.TAILSCALE,
     CheckType.DNS,
     CheckType.ICMP,
 ]
@@ -61,6 +64,7 @@ class EndpointType(str, Enum):
     DOMAIN = "domain"
     HTTP = "http"
     DNS_SERVER = "dns_server"
+    TAILSCALE_PEER = "tailscale_peer"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -78,6 +82,9 @@ class Measurement:
     port: int | None = None  # For TCP checks
     protocol: str | None = None  # For HTTP checks (http/https)
     resolved_ip: str | None = None  # For DNS checks - first resolved IP address
+    # For Tailscale checks: the relay that carried the reply, for example "DERP xyz". None for a
+    # reply over a direct path.
+    relay: str | None = None
     # A skipped layer did not run because ``blocked_by`` failed earlier in the same probe. It is
     # not a failure of its own: problem lines report ``blocked_by``, and the graph shows its letter.
     skipped: bool = False
@@ -140,6 +147,7 @@ class CheckResult(Measurement):
             port=measurement.port,
             protocol=measurement.protocol,
             resolved_ip=measurement.resolved_ip,
+            relay=measurement.relay,
             skipped=measurement.skipped,
             blocked_by=measurement.blocked_by,
             started_at=started_at,
@@ -349,6 +357,27 @@ class DNSServerEndpoint(Endpoint):
 
     def get_primary_check_type(self) -> CheckType:
         return self.primary_check_type if self.primary_check_type else CheckType.DNS
+
+
+@dataclass
+class TailscalePeerEndpoint(Endpoint):
+    """A Tailscale peer measured with ``tailscale ping`` - one Tailscale check.
+
+    ``peer`` is the peer's name or Tailscale IP, as ``tailscale ping`` takes it. The check reports
+    the latency and whether the reply came over a direct path or through a relay.
+    ``check = "tailscale"`` in the config makes an endpoint of this type.
+    """
+
+    peer: str
+
+    def __post_init__(self):
+        self.endpoint_type = EndpointType.TAILSCALE_PEER
+
+    def get_check_types(self) -> list[CheckType]:
+        return [CheckType.TAILSCALE]
+
+    def get_primary_check_type(self) -> CheckType:
+        return self.primary_check_type if self.primary_check_type else CheckType.TAILSCALE
 
 
 @dataclass
