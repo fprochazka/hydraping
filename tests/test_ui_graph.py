@@ -10,9 +10,10 @@ from rich.console import Console
 
 from hydraping.core.config import Config
 from hydraping.core.engine import Engine
+from hydraping.core.graphcells import failure_char
 from hydraping.core.models import CheckResult, CheckType, Endpoint, Measurement
 from hydraping.tui.dashboard import Dashboard
-from hydraping.tui.graph import LatencyGraph, failure_char
+from hydraping.tui.graph import LatencyGraph
 
 
 def icmp_ok(latency_ms: float) -> CheckResult:
