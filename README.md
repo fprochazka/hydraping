@@ -71,6 +71,7 @@ The display shows:
 - **Endpoint name** - What you're monitoring
 - **Latency graph** - Visual history scrolling right-to-left (color-coded by latency)
 - **Current latency** - Latest measurement with check type (ICMP/DNS/TCP/UDP/TLS/HTTP)
+- **Interface** - The network interface the kernel routes the target through, for example `via tailscale0`, looked up with `ip -j route get` at most once every 5 seconds per address. A name shows it once it has been resolved. An address the kernel has no route to, such as a VPN subnet while the VPN is down, shows `via no route`. The column is left out when the `ip` command (iproute2) is missing or can't look up the route to 127.0.0.1, and in a terminal too narrow for it.
 - **Problems** - Only relevant issues (smart filtering based on check hierarchy)
 
 Graph colors: 🟢 Green (<50ms) · 🟡 Yellow (50-100ms) · 🟠 Orange (100-200ms) · 🔴 Red (>200ms)

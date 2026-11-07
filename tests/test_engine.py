@@ -275,11 +275,11 @@ class TestEngine:
             server.close()
             engine.resolver_executor.shutdown(wait=False)
 
-        assert engine._icmp_target("localhost", 4) == "127.0.0.1"
+        assert engine._resolved_address("localhost", 4) == "127.0.0.1"
         # The IPv6 variant has not resolved anything yet; it must not borrow the IPv4 address.
-        assert engine._icmp_target("localhost", 6) is None
-        assert engine._icmp_target("localhost", None) is None
-        assert engine._icmp_target("192.0.2.1", None) == "192.0.2.1"
+        assert engine._resolved_address("localhost", 6) is None
+        assert engine._resolved_address("localhost", None) is None
+        assert engine._resolved_address("192.0.2.1", None) == "192.0.2.1"
 
     async def test_icmp_records_nothing_for_a_name_its_chain_has_not_resolved(self):
         engine = Engine(Config(endpoints=[Endpoint.parse("example.com")]))

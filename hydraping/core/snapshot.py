@@ -35,6 +35,8 @@ class EndpointSnapshot:
     current: CheckResult | None
     # Problem lines after hierarchy suppression, without the endpoint name.
     problems: tuple[str, ...]
+    # The network interface the kernel routes the endpoint's address through, when known.
+    interface: str | None = None
 
     def primary_layer(self) -> LayerView | None:
         return self.layers.get(self.primary)

@@ -32,6 +32,8 @@ FIXED_WIDTH = LATENCY_TIME_WIDTH + PROTOCOL_WIDTH + TABLE_PADDING
 class ColumnWidths:
     endpoint: int
     graph: int
+    # 0 when no row has a known interface, or when the terminal has no room for the column.
+    interface: int = 0
 
 
 def _endpoint_width_bounds(endpoints: list[Endpoint]) -> tuple[int, int]:
@@ -47,13 +49,22 @@ def minimum_terminal_width(endpoints: list[Endpoint]) -> int:
     return smallest_endpoint + FIXED_WIDTH + MIN_GRAPH_WIDTH
 
 
+def interface_label(interface: str) -> str:
+    return f"via {interface}"
+
+
 def calculate_column_widths(
-    endpoints: list[Endpoint], terminal_width: int, ui_graph_width: int = 0
+    endpoints: list[Endpoint],
+    terminal_width: int,
+    ui_graph_width: int = 0,
+    interface_width: int = 0,
 ) -> ColumnWidths | None:
     """Return the column widths for one frame, or None if the terminal is too narrow.
 
     The columns always add up to at most ``terminal_width``, so Rich never has to shrink the
-    graph. A configured ``ui_graph_width`` is capped at the space the terminal has.
+    graph. A configured ``ui_graph_width`` is capped at the space the terminal has. The interface
+    column, ``interface_width`` wide, is optional: it is dropped when it would shrink the graph
+    below ``MIN_GRAPH_WIDTH``.
     """
     if terminal_width < minimum_terminal_width(endpoints):
         return None
@@ -63,9 +74,15 @@ def calculate_column_widths(
     endpoint_width = max(smallest_endpoint, min(preferred_endpoint, room_for_endpoint))
 
     available = terminal_width - FIXED_WIDTH - endpoint_width
+    # The interface column brings its own padding of one space on each side.
+    interface_column = interface_width + 2 if interface_width > 0 else 0
+    if available - interface_column >= MIN_GRAPH_WIDTH:
+        available -= interface_column
+    else:
+        interface_width = 0
     graph_width = min(ui_graph_width, available) if ui_graph_width > 0 else available
 
-    return ColumnWidths(endpoint=endpoint_width, graph=graph_width)
+    return ColumnWidths(endpoint=endpoint_width, graph=graph_width, interface=interface_width)
 
 
 class Dashboard:
@@ -87,8 +104,14 @@ class Dashboard:
     def render(self) -> RenderableType:
         """Render the current state at the console's current width."""
         terminal_width = self.console.size.width
+        interface_width = max(
+            (len(interface_label(name)) for name in self.engine.interfaces().values()), default=0
+        )
         widths = calculate_column_widths(
-            self.engine.endpoints, terminal_width, self.engine.config.ui.graph_width
+            self.engine.endpoints,
+            terminal_width,
+            self.engine.config.ui.graph_width,
+            interface_width,
         )
         if widths is None:
             message = Text(
@@ -107,9 +130,11 @@ class Dashboard:
         table.add_column("Graph", width=widths.graph, no_wrap=True)
         table.add_column("Time", width=LATENCY_TIME_WIDTH, justify="right", no_wrap=True)
         table.add_column("Protocol", width=PROTOCOL_WIDTH, justify="left", no_wrap=True)
+        if widths.interface:
+            table.add_column("Interface", width=widths.interface, no_wrap=True)
 
         for row in snapshot.rows:
-            self._add_endpoint_row(table, row, widths.graph)
+            self._add_endpoint_row(table, row, widths)
 
         problems = self._problems(snapshot)
         renderables: list[RenderableType] = [table]
@@ -121,7 +146,7 @@ class Dashboard:
 
         return Group(*renderables)
 
-    def _add_endpoint_row(self, table: Table, row: EndpointSnapshot, graph_width: int):
+    def _add_endpoint_row(self, table: Table, row: EndpointSnapshot, widths: ColumnWidths):
         current = row.current
         if current is not None and current.success and current.latency_ms is not None:
             check_label = current.check_type.value.upper()
@@ -144,13 +169,18 @@ class Dashboard:
             latency_style = "dim"
 
         primary_layer = row.primary_layer()
-        results = primary_layer.results() if primary_layer is not None else [None] * graph_width
-        table.add_row(
+        results = primary_layer.results() if primary_layer is not None else [None] * widths.graph
+        cells = [
             Text(row.endpoint.display_name, style="bold"),
             self.graph.render(results),
             Text(time_str, style=latency_style),
             Text(protocol_str, style="dim"),
-        )
+        ]
+        if widths.interface:
+            # An interface that appeared after the widths were computed is cut by Rich, which is
+            # harmless for one frame.
+            cells.append(Text(interface_label(row.interface) if row.interface else "", style="dim"))
+        table.add_row(*cells)
 
     @staticmethod
     def _problems(snapshot: EngineSnapshot) -> list[str]:

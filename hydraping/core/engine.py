@@ -26,6 +26,7 @@ from hydraping.core.models import (
     UDPPortEndpoint,
     _is_ip_address,
 )
+from hydraping.core.route import EgressInterfaces
 from hydraping.core.snapshot import EndpointSnapshot, EngineSnapshot, LayerView
 from hydraping.core.store import BucketStore
 
@@ -156,6 +157,10 @@ class Engine:
         )
 
         self.store = BucketStore(len(self.endpoints), checks.bucket_seconds)
+        self.egress = EgressInterfaces()
+        # The outgoing interface per endpoint index, written by the egress loop under the store
+        # lock. An endpoint without a known address or route has no entry.
+        self._interfaces: dict[int, str] = {}
         self.schedules: list[ProbeSchedule] = []
         for index, endpoint in enumerate(self.endpoints):
             self.schedules.extend(self._schedules_for(index, endpoint))
@@ -244,19 +249,20 @@ class Engine:
 
     def _icmp_probe(self, host: str, ip_version: int | None = None) -> Probe:
         async def probe() -> Sequence[Measurement]:
-            target = self._icmp_target(host, ip_version)
+            target = self._resolved_address(host, ip_version)
             if target is None:
                 return []
             return [await self.icmp_checker.check(target)]
 
         return probe
 
-    def _icmp_target(self, host: str, ip_version: int | None) -> str | None:
-        """Return the address to ping for ``host``, or None while its chain has not resolved it.
+    def _resolved_address(self, host: str, ip_version: int | None) -> str | None:
+        """Return the address of ``host``, or None while its chain has not resolved it.
 
-        ICMP never resolves a name itself. The lookup would run on the loop's default executor,
-        which ``asyncio.run()`` waits for on shutdown, so a hanging resolver would block ``stop()``.
-        Until the chain has resolved the name, the ICMP schedule records nothing for its ticks.
+        ICMP and the egress lookup never resolve a name themselves. The lookup would run on the
+        loop's default executor, which ``asyncio.run()`` waits for on shutdown, so a hanging
+        resolver would block ``stop()``. Until the chain has resolved the name, the ICMP schedule
+        records nothing for its ticks.
 
         The chain of an ``ip_version = 6`` endpoint resolves to an IPv6 address, and its ICMP
         schedule must ping that one, not what the IPv4 twin of the same host resolved.
@@ -264,6 +270,42 @@ class Engine:
         if _is_ip_address(host):
             return host
         return self.connection_checker.get_last_resolved_ip(host, ip_version)
+
+    def _endpoint_address(self, endpoint: Endpoint) -> str | None:
+        if isinstance(endpoint, (IPEndpoint, IPPortEndpoint, UDPPortEndpoint)):
+            return endpoint.ip
+        if isinstance(endpoint, DomainEndpoint):
+            return self._resolved_address(endpoint.domain, endpoint.ip_version)
+        if isinstance(endpoint, HTTPEndpoint):
+            return self._resolved_address(endpoint.host, endpoint.ip_version)
+        return None
+
+    async def _egress_loop(self) -> None:
+        """Keep the outgoing interface of every endpoint's current address up to date.
+
+        Runs once per probe interval, so a newly resolved address shows its interface quickly.
+        ``EgressInterfaces`` caches each address, which bounds how often ``ip`` runs.
+        """
+        while True:
+            try:
+                await self._refresh_interfaces()
+            except Exception:
+                logger.exception("Looking up outgoing interfaces failed")
+            await asyncio.sleep(self.config.checks.probe_interval_seconds)
+
+    async def _refresh_interfaces(self) -> None:
+        addresses = [self._endpoint_address(endpoint) for endpoint in self.endpoints]
+        lookups = [
+            self.egress.interface_for(address) if address is not None else _none()
+            for address in addresses
+        ]
+        interfaces = await asyncio.gather(*lookups)
+        with self.store.lock:
+            self._interfaces = {
+                index: interface
+                for index, interface in enumerate(interfaces)
+                if interface is not None
+            }
 
     def _connection_probe(self, target: ConnectionTarget) -> Probe:
         async def probe() -> Sequence[Measurement]:
@@ -316,6 +358,7 @@ class Engine:
         self._loop = asyncio.get_running_loop()
         self._stop_event = asyncio.Event()
         tasks = [asyncio.ensure_future(schedule.run()) for schedule in self.schedules]
+        tasks.append(asyncio.ensure_future(self._egress_loop()))
         self._started.set()
         try:
             await self._stop_event.wait()
@@ -327,6 +370,11 @@ class Engine:
             self.resolver_executor.shutdown(wait=False, cancel_futures=True)
 
     # -- reading -----------------------------------------------------------------------------
+
+    def interfaces(self) -> dict[int, str]:
+        """Return the known outgoing interface per endpoint index. Thread-safe."""
+        with self.store.lock:
+            return dict(self._interfaces)
 
     def snapshot(self, columns: int, now: float | None = None) -> EngineSnapshot:
         """Return the state for one frame, with ``columns`` buckets per layer. Thread-safe."""
@@ -362,7 +410,12 @@ class Engine:
             layers=layers,
             current=latest.get(primary),
             problems=tuple(problems_for(latest, icmp_available)),
+            interface=self._interfaces.get(index),
         )
+
+
+async def _none() -> None:
+    return None
 
 
 def problems_for(latest: Mapping[LayerKey, CheckResult | None], icmp_available: bool) -> list[str]:
