@@ -10,6 +10,7 @@ from hydraping.core.config import (
     create_default_config,
 )
 from hydraping.core.models import (
+    CheckType,
     DomainEndpoint,
     HTTPEndpoint,
     IPEndpoint,
@@ -145,6 +146,44 @@ http_success_status_max = 299
 
         config = Config.load(config_file)
         assert config.checks.http_success_status_max == 299
+
+    def test_insecure_turns_off_certificate_verification_for_https(self, tmp_path):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text("""
+version = 2
+[endpoints]
+targets = [
+    { url = "https://router.example.internal/", insecure = true },
+    { url = "https://example.com/", primary_check_type = "tls" },
+    "https://example.com/other",
+]
+""")
+        config = Config.load(config_file)
+        insecure, tls_primary, default = config.endpoints
+        assert insecure.insecure is True
+        assert tls_primary.insecure is False
+        assert tls_primary.primary_check_type == CheckType.TLS
+        assert default.insecure is False
+
+    def test_insecure_on_an_endpoint_without_tls_is_an_error(self, tmp_path):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text("""
+version = 2
+[endpoints]
+targets = [{ url = "http://example.com/", insecure = true }]
+""")
+        with pytest.raises(ValueError, match="only https:// endpoints have a TLS layer"):
+            Config.load(config_file)
+
+    def test_insecure_must_be_a_bool(self, tmp_path):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text("""
+version = 2
+[endpoints]
+targets = [{ url = "https://example.com/", insecure = "yes" }]
+""")
+        with pytest.raises(ValueError, match="insecure must be true or false"):
+            Config.load(config_file)
 
     def test_invalid_config_no_endpoints(self, tmp_path):
         """Test that config without endpoints raises error."""

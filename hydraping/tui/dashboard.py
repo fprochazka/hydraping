@@ -14,9 +14,9 @@ from hydraping.core.snapshot import EndpointSnapshot, EngineSnapshot
 from hydraping.tui.constants import get_latency_color
 from hydraping.tui.graph import LatencyGraph
 
-# Fixed columns: "999.9ms" fits in 8 characters, "(TCP:443)" in 10.
+# Fixed columns: "999.9ms" fits in 8 characters, "(TCP:65535)" in 11.
 LATENCY_TIME_WIDTH = 8
-PROTOCOL_WIDTH = 10
+PROTOCOL_WIDTH = 11
 # The endpoint column is the first to shrink in a narrow terminal. Names cut with "…" stay
 # readable down to MIN_ENDPOINT_WIDTH. A graph cut by Rich would hide the newest buckets instead.
 MAX_ENDPOINT_WIDTH = 30
@@ -133,8 +133,10 @@ class Dashboard:
             protocol_str = f"({check_label})"
             latency_style = get_latency_color(current.latency_ms)
         elif current is not None:
+            # Name the layer that broke, which for a skipped primary layer is an earlier one.
+            failed_layer = current.failed_layer or current.check_type
             time_str = "FAIL"
-            protocol_str = f"({current.check_type.value.upper()})"
+            protocol_str = f"({failed_layer.value.upper()})"
             latency_style = "red"
         else:
             time_str = "N/A"

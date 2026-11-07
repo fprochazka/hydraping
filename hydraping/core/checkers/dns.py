@@ -1,10 +1,12 @@
 """DNS resolver checker."""
 
 import time
+from collections.abc import Sequence
 
 import dns.asyncresolver
 import dns.exception
 import dns.resolver
+from dns.nameserver import Nameserver
 
 from hydraping.core.checkers.base import BaseChecker
 from hydraping.core.models import CheckType, Measurement
@@ -13,8 +15,12 @@ from hydraping.core.models import CheckType, Measurement
 class DNSChecker(BaseChecker):
     """Checker for DNS resolution."""
 
-    def __init__(self, timeout: float = 5.0, nameservers: list[str] | None = None):
-        """Initialize DNS checker with optional custom nameservers."""
+    def __init__(self, timeout: float = 5.0, nameservers: Sequence[str | Nameserver] | None = None):
+        """Initialize DNS checker with optional custom nameservers.
+
+        ``nameservers`` takes addresses, or ``dns.nameserver.Nameserver`` objects when a server
+        listens on a port other than 53.
+        """
         super().__init__(timeout)
         self.nameservers = nameservers
         # Cache of last resolved IPs per target
@@ -45,7 +51,7 @@ class DNSChecker(BaseChecker):
 
             # Use custom nameservers if provided
             if self.nameservers:
-                resolver.nameservers = self.nameservers
+                resolver.nameservers = list(self.nameservers)
 
             # Measure resolution time
             # Query based on IP version preference

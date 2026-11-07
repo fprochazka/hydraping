@@ -1,10 +1,11 @@
 # HydraPing
 
-Multi-protocol connection tester with live terminal UI - Because it has many "heads" (DNS, ICMP, TCP, UDP, HTTP) looking at many targets.
+Multi-protocol connection tester with live terminal UI - Because it has many "heads" (DNS, ICMP, TCP, UDP, TLS, HTTP) looking at many targets.
 
 ## Features
 
-- **Multi-protocol checks**: ICMP ping, DNS resolution, TCP port connectivity, HTTP/HTTPS requests
+- **Multi-protocol checks**: ICMP ping, DNS resolution, TCP port connectivity, TLS handshake, HTTP/HTTPS requests
+- **Per-layer measurement**: an HTTPS target is measured as DNS, TCP, TLS and HTTP separately, so a failure names the layer that broke
 - **Live terminal UI**: Real-time updating display with latency graphs
 - **Flexible endpoint support**: Check IPv4/IPv6 addresses, domains, ports, and HTTP endpoints
 - **IPv6 support**: Full support for IPv6 addresses with bracket notation for ports
@@ -69,10 +70,12 @@ Problems:
 The display shows:
 - **Endpoint name** - What you're monitoring
 - **Latency graph** - Visual history scrolling right-to-left (color-coded by latency)
-- **Current latency** - Latest measurement with check type (ICMP/DNS/TCP/HTTP)
+- **Current latency** - Latest measurement with check type (ICMP/DNS/TCP/UDP/TLS/HTTP)
 - **Problems** - Only relevant issues (smart filtering based on check hierarchy)
 
 Graph colors: 🟢 Green (<50ms) · 🟡 Yellow (50-100ms) · 🟠 Orange (100-200ms) · 🔴 Red (>200ms)
+
+A failed column shows the letter of the layer that broke: `D` DNS, `T` TCP, `S` TLS, `H` HTTP. ICMP and UDP failures show `!`. When the displayed layer did not run because an earlier one failed, the column shows the earlier layer's letter, and the latency column shows `FAIL (TCP)` with that layer's name.
 
 ## Configuration
 
@@ -104,6 +107,9 @@ targets = [
     # Custom primary check type (choose which check to graph/display)
     # Useful when ICMP is blocked but you want to monitor TCP connectivity
     { url = "example.com", primary_check_type = "tcp", name = "Example (TCP primary)" },
+
+    # Accept any certificate (self-signed devices); the TLS layer still measures the handshake
+    { url = "https://router.example.internal/", insecure = true, name = "Router admin" },
 ]
 
 [dns]
@@ -113,6 +119,7 @@ servers = []  # Optional: DNS servers to query instead of the system resolver
 probe_interval_seconds = 1.0  # A new probe starts every second
 bucket_seconds = 5.0          # One graph column covers 5 seconds
 timeout_seconds = 5.0         # A probe that takes longer counts as failed
+http_success_status_max = 399 # HTTP status codes up to this count as success
 
 [ui]
 graph_width = 0  # Auto-size to terminal width
@@ -141,10 +148,12 @@ Supported endpoint formats:
 - **IPv6:port (TCP)**: `[2001:4860:4860::8888]:53` → ICMP + TCP port check (note the brackets)
 - **Domain:port (TCP)**: `example.com:8080` → DNS resolution + ICMP + TCP port check
 - **UDP port**: `{ url = "1.1.1.1:53", protocol = "udp" }` → ICMP + UDP port check
-- **Domain**: `google.com` → DNS resolution + ICMP + TCP (ports 80/443)
-- **HTTP/HTTPS**: `https://example.com/` → Full stack (DNS + ICMP + TCP + HTTP request)
+- **Domain**: `google.com` → DNS resolution + ICMP + TCP to ports 80 and 443, each port with its own history
+- **HTTP**: `http://example.com/` → DNS + ICMP + TCP + HTTP request
+- **HTTPS**: `https://example.com/` → DNS + ICMP + TCP + TLS handshake + HTTP request
 - **IPv4/IPv6 preference**: `{ url = "google.com", ip_version = 4 }` → Force IPv4 or IPv6
-- **Custom primary check**: `{ url = "example.com", primary_check_type = "tcp" }` → Choose which check to display (dns/icmp/tcp/udp/http)
+- **Custom primary check**: `{ url = "example.com", primary_check_type = "tcp" }` → Choose which check to display (dns/icmp/tcp/udp/tls/http)
+- **Any certificate**: `{ url = "https://router.example.internal/", insecure = true }` → Skip certificate verification in the TLS layer (HTTPS only)
 
 ## Troubleshooting
 
@@ -203,16 +212,28 @@ For each endpoint, HydraPing runs applicable checks based on the endpoint type:
 
 - **IP addresses** (`8.8.8.8`, `2001:4860:4860::8888`): ICMP only (supports both IPv4 and IPv6)
 - **IP:port** (`1.1.1.1:53`, `[2001:4860:4860::8888]:53`): ICMP + TCP
-- **Domains** (`google.com`): DNS + ICMP + TCP (ports 80 and 443)
-- **HTTP/HTTPS URLs**: DNS + ICMP + TCP + HTTP request
+- **Domains** (`google.com`): DNS + ICMP + TCP to ports 80 and 443. The two ports are probed as separate chains that share the DNS layer and keep separate TCP histories, so a closed port 80 shows up as a steady problem line next to a working port 443 instead of a flickering TCP layer. With `primary_check_type = "tcp"` the graph and latency column show port 443.
+- **HTTP URLs**: DNS + ICMP + TCP + HTTP request
+- **HTTPS URLs**: DNS + ICMP + TCP + TLS handshake + HTTP request
 
-By default, the dashboard displays the highest-priority successful check result (HTTP > TCP/UDP > DNS > ICMP). If a higher-level check succeeds (e.g., HTTP), lower-level failures (e.g., ICMP) are suppressed to reduce noise.
+If a higher-level check succeeds (e.g., HTTP), lower-level failures (e.g., ICMP) are suppressed in the Problems list to reduce noise. The order is HTTP > TLS > TCP/UDP > DNS > ICMP.
+
+### Connection layers
+
+ICMP runs on its own schedule. The other layers of one target run as one probe, in order: DNS, TCP connect, TLS handshake (HTTPS only), HTTP request (URLs only). Each layer is timed on its own, so the DNS time is the lookup, the TCP time is the connect, the TLS time is the handshake, and the HTTP time runs from the request to the status line. A layer runs only when the one before it succeeded. The layers after a failed one are recorded as skipped, not as failures, and the Problems list names the layer that failed.
+
+Details worth knowing:
+
+- The DNS layer uses the system resolver (`getaddrinfo`), so it sees `/etc/hosts` and the local stub resolver, the same as any application on the machine. With `[dns] servers` set, it queries those servers directly instead. The TCP layer connects to the first address returned, and the ICMP check pings that same address.
+- The TLS layer verifies the certificate chain and the hostname with the system CA store. `insecure = true` turns verification off for one endpoint; the handshake is still measured.
+- The HTTP layer sends one HTTP/1.1 `GET` with `Host`, `User-Agent: hydraping/<version>` and `Connection: close`, reads the status line and closes. Redirects are not followed: a `301` is a result, not a hop, and it counts as success while `http_success_status_max` is 399 or more. HTTP/2 and HTTP/3 are not used.
+- All layers of one probe share one deadline of `timeout_seconds`, counted from the probe's start. The layer that is still running when the deadline passes fails with a message that says where the time went, for example `Timeout: probe deadline 5.0s reached (DNS took 4.6s)`, and the layers after it are skipped. The layers that finished keep their own latency.
 
 #### Custom Primary Check Type
 
-You can override which check type is displayed in the graph and latency column using `primary_check_type`. This is useful when:
+You can override which check type is displayed in the graph and latency column using `primary_check_type` (`dns`, `icmp`, `tcp`, `udp`, `tls` or `http`). This is useful when:
 - ICMP is blocked by firewall (common for many services)
-- You want to monitor a specific layer (e.g., TCP connectivity instead of ICMP)
+- You want to monitor a specific layer (e.g., TCP connectivity instead of ICMP, or the TLS handshake alone)
 - You care more about application-layer health than network-layer connectivity
 
 All applicable checks still run in the background, and failures are reported in the "Problems" section. Only the graph and latency display are affected by the primary check type setting.
@@ -222,8 +243,8 @@ All applicable checks still run in the background, and failures are reported in 
 - **Async-first design**: Uses `asyncio` to run multiple checks concurrently without blocking
 - **Built with**:
   - `icmplib` - Async ICMP ping
-  - `dnspython` - DNS resolution
-  - `aiohttp` - Async HTTP requests
+  - `dnspython` - DNS queries against configured servers
+  - `asyncio` streams and `ssl` from the standard library - TCP connect, TLS handshake and the raw HTTP/1.1 request
   - `Rich` - Terminal UI rendering
   - `Typer` - CLI framework
 - **Probe scheduler**: every check runs on its own schedule; one slow target never delays the others. The engine runs on its own thread, and the terminal UI only reads snapshots of the results

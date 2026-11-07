@@ -5,7 +5,7 @@ import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from hydraping.core.models import CheckResult, CheckType
+from hydraping.core.models import CheckResult, LayerKey
 
 # Buckets kept per (endpoint, layer). At the default 5 s bucket this is five hours, enough for any
 # terminal or window width. The size depends on time, not on the display.
@@ -97,23 +97,23 @@ class LayerHistory:
 
 
 class EndpointHistory:
-    """All layers of one endpoint."""
+    """All layers of one endpoint, keyed by ``LayerKey``: TCP has one history per port."""
 
     def __init__(self, bucket_seconds: float, capacity: int = HISTORY_BUCKETS):
         self.bucket_seconds = bucket_seconds
         self.capacity = capacity
-        self.layers: dict[CheckType, LayerHistory] = {}
+        self.layers: dict[LayerKey, LayerHistory] = {}
 
-    def layer(self, check_type: CheckType) -> LayerHistory:
-        history = self.layers.get(check_type)
+    def layer(self, key: LayerKey) -> LayerHistory:
+        history = self.layers.get(key)
         if history is None:
             history = LayerHistory(self.bucket_seconds, self.capacity)
-            self.layers[check_type] = history
+            self.layers[key] = history
         return history
 
     def apply(self, results: Sequence[CheckResult]) -> None:
         for result in results:
-            self.layer(result.check_type).apply(result)
+            self.layer(result.layer_key).apply(result)
 
 
 class BucketStore:

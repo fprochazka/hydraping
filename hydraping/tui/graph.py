@@ -2,13 +2,28 @@
 
 from rich.text import Text
 
-from hydraping.core.models import CheckResult
+from hydraping.core.models import CheckResult, CheckType
 from hydraping.tui.constants import (
     LATENCY_GREEN_MAX,
     LATENCY_ORANGE_MAX,
     LATENCY_YELLOW_MAX,
     get_latency_color,
 )
+
+# The graph character of a failed bucket names the layer that broke. ICMP and UDP have no chain,
+# so their failures keep "!".
+FAILURE_LETTERS = {
+    CheckType.DNS: "D",
+    CheckType.TCP: "T",
+    CheckType.TLS: "S",
+    CheckType.HTTP: "H",
+}
+
+
+def failure_char(result: CheckResult) -> str:
+    """Return the graph character for a failed result: the letter of the layer that failed."""
+    failed_layer = result.failed_layer or result.check_type
+    return FAILURE_LETTERS.get(failed_layer, "!")
 
 
 class LatencyGraph:
@@ -34,6 +49,9 @@ class LatencyGraph:
         Missing data points are rendered as:
         - Dots (·) for empty buckets before first data, after last data, or large gaps (>10)
         - Exclamation marks (!) for small gaps (≤10 buckets) between data points
+
+        A failed bucket shows the letter of the layer that failed (D, T, S, H), or "!" for a check
+        without layers; see ``failure_char``.
 
         Args:
             bucketed_results: List of CheckResult or None, where each position
@@ -107,8 +125,7 @@ class LatencyGraph:
                 bar, color = self._get_bar_for_latency(result.latency_ms)
                 graph_text.append(bar, style=color)
             else:
-                # Failed check - use red exclamation mark
-                graph_text.append("!", style="red")
+                graph_text.append(failure_char(result), style="red")
 
         return graph_text
 

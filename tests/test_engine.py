@@ -7,9 +7,11 @@ import time
 
 import pytest
 
+from hydraping.core.checkers.connection import ConnectionTarget
 from hydraping.core.config import ChecksConfig, Config
 from hydraping.core.engine import Engine, ProbeSchedule, problems_for
-from hydraping.core.models import CheckResult, CheckType, Endpoint, Measurement
+from hydraping.core.models import CheckResult, CheckType, Endpoint, LayerKey, Measurement
+from hydraping.core.store import BucketStore
 
 INTERVAL = 0.05
 
@@ -171,14 +173,14 @@ class TestEngine:
                     pytest.fail("no TCP result within 3 s")
                 time.sleep(0.02)
 
-            assert row.primary == CheckType.TCP
+            assert row.primary == LayerKey(CheckType.TCP, port)
             assert row.current.success, row.current.error_message
             assert row.current.port == port
             # A result can land in the bucket that just closed while the open one is still empty.
-            recent = row.layers[CheckType.TCP].buckets[-2:]
+            recent = row.layers[LayerKey(CheckType.TCP, port)].buckets[-2:]
             assert row.current in [bucket.last for bucket in recent if bucket is not None]
             assert row.problems == ()
-            assert len(row.layers[CheckType.TCP].buckets) == 10
+            assert len(row.layers[LayerKey(CheckType.TCP, port)].buckets) == 10
         finally:
             started = time.monotonic()
             engine.stop()
@@ -207,7 +209,7 @@ class TestEngine:
             deadline = time.monotonic() + 3.0
             while time.monotonic() < deadline:
                 [row] = engine.snapshot(columns=5).rows
-                tcp = row.layers.get(CheckType.TCP)
+                tcp = row.layers.get(LayerKey(CheckType.TCP, port))
                 if tcp is not None and tcp.latest is not None:
                     break
                 time.sleep(0.02)
@@ -233,6 +235,109 @@ class TestEngine:
         engine.stop()
         assert not any(t.name == "hydraping-engine" for t in threading.enumerate())
 
+    def test_stop_does_not_wait_for_a_lookup_stuck_in_the_resolver_thread(self):
+        release = threading.Event()
+        blocked = threading.Event()
+
+        def hanging_getaddrinfo() -> None:
+            blocked.set()
+            release.wait()
+
+        engine = Engine(Config(endpoints=[Endpoint.parse("192.0.2.1")], checks=FAST_CHECKS))
+
+        async def stuck_probe() -> list[Measurement]:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(engine.resolver_executor, hanging_getaddrinfo)
+            return []
+
+        engine.schedules = [
+            ProbeSchedule("stuck", stuck_probe, INTERVAL, timeout=1.0, on_results=lambda r: None)
+        ]
+        try:
+            engine.start()
+            assert blocked.wait(3.0), "the probe never reached the resolver thread"
+            started = time.monotonic()
+            engine.stop()
+            stop_took = time.monotonic() - started
+        finally:
+            release.set()
+
+        assert stop_took < 1.0
+        assert not any(t.name == "hydraping-engine" for t in threading.enumerate())
+
+    async def test_icmp_pings_the_address_the_chain_of_the_same_ip_version_resolved(self):
+        server = listening_socket()
+        port = server.getsockname()[1]
+        engine = Engine(Config(endpoints=[Endpoint.parse(f"localhost:{port}")]))
+        try:
+            await engine.connection_checker.check(ConnectionTarget("localhost", port, ip_version=4))
+        finally:
+            server.close()
+            engine.resolver_executor.shutdown(wait=False)
+
+        assert engine._icmp_target("localhost", 4) == "127.0.0.1"
+        # The IPv6 variant has not resolved anything yet; it must not borrow the IPv4 address.
+        assert engine._icmp_target("localhost", 6) is None
+        assert engine._icmp_target("localhost", None) is None
+        assert engine._icmp_target("192.0.2.1", None) == "192.0.2.1"
+
+    async def test_icmp_records_nothing_for_a_name_its_chain_has_not_resolved(self):
+        engine = Engine(Config(endpoints=[Endpoint.parse("example.com")]))
+        try:
+            assert await engine._icmp_probe("example.com")() == []
+        finally:
+            engine.resolver_executor.shutdown(wait=False)
+
+    async def test_one_closed_port_of_a_domain_keeps_its_own_steady_history(self):
+        """One port open and one closed must give a steady open-port history and a steady
+        problem line for the closed port, not a TCP layer that alternates with every probe.
+
+        Ports 80 and 443 cannot be bound in a test, so this wires two chains into one endpoint
+        history the way ``Engine`` does for a domain without a port, with two ports of its own.
+        """
+        server = listening_socket()
+        open_port = server.getsockname()[1]
+        closed = listening_socket()
+        closed_port = closed.getsockname()[1]
+        closed.close()
+        engine = Engine(Config(endpoints=[Endpoint.parse("localhost")], checks=FAST_CHECKS))
+        store = BucketStore(endpoint_count=1, bucket_seconds=FAST_CHECKS.bucket_seconds)
+        schedules = [
+            ProbeSchedule(
+                f"localhost dns+tcp:{port}",
+                engine._connection_probe(ConnectionTarget("localhost", port, ip_version=4)),
+                INTERVAL,
+                timeout=1.0,
+                on_results=lambda results: store.apply(0, results),
+            )
+            for port in (open_port, closed_port)
+        ]
+        try:
+            await run_for(INTERVAL * 8, *schedules)
+        finally:
+            server.close()
+            engine.resolver_executor.shutdown(wait=False)
+
+        layers = store.endpoints[0].layers
+        assert set(layers) == {
+            LayerKey(CheckType.DNS),
+            LayerKey(CheckType.TCP, open_port),
+            LayerKey(CheckType.TCP, closed_port),
+        }
+
+        def counts(key: LayerKey) -> tuple[int, int]:
+            buckets = [b for b in layers[key].view(time.time(), 3) if b is not None]
+            return sum(b.ok_count for b in buckets), sum(b.failed_count for b in buckets)
+
+        open_ok, open_failed = counts(LayerKey(CheckType.TCP, open_port))
+        closed_ok, closed_failed = counts(LayerKey(CheckType.TCP, closed_port))
+        assert open_ok >= 3 and open_failed == 0
+        assert closed_failed >= 3 and closed_ok == 0
+        latest = {key: layer.latest for key, layer in layers.items()}
+        assert problems_for(latest, icmp_available=True) == [
+            f"TCP: Connection refused on port {closed_port}"
+        ]
+
     def test_schedules_per_endpoint_type(self):
         config = Config(
             endpoints=[
@@ -241,6 +346,7 @@ class TestEngine:
                 Endpoint.parse("example.com"),
                 Endpoint.parse("example.com:8080"),
                 Endpoint.parse("https://example.com/health"),
+                Endpoint.parse("http://192.0.2.1/"),
             ]
         )
         names = [schedule.name for schedule in Engine(config).schedules]
@@ -248,18 +354,26 @@ class TestEngine:
             "192.0.2.1 icmp",
             "192.0.2.1:22 icmp",
             "192.0.2.1:22 tcp",
-            "example.com dns",
             "example.com icmp",
-            "example.com tcp:80",
-            "example.com tcp:443",
-            "example.com:8080 dns",
+            "example.com dns+tcp:80",
+            "example.com dns+tcp:443",
             "example.com:8080 icmp",
-            "example.com:8080 tcp:8080",
-            "https://example.com/health dns",
+            "example.com:8080 dns+tcp:8080",
             "https://example.com/health icmp",
-            "https://example.com/health tcp",
-            "https://example.com/health http",
+            "https://example.com/health dns+tcp+tls+http",
+            "http://192.0.2.1/ icmp",
+            "http://192.0.2.1/ tcp+http",
         ]
+
+    async def test_unexpected_checker_error_fails_the_first_layer_and_skips_the_rest(self):
+        async def broken() -> list[Measurement]:
+            raise RuntimeError("checker bug")
+
+        layers = [CheckType.DNS, CheckType.TCP, CheckType.HTTP]
+        [dns, tcp, http] = await Engine._guarded(layers, broken)()
+        assert dns.error_message == "Unexpected error: checker bug"
+        assert tcp.skipped and tcp.blocked_by == CheckType.DNS
+        assert http.skipped and http.blocked_by == CheckType.DNS
 
 
 def failed(check_type: CheckType, message: str) -> CheckResult:
@@ -278,34 +392,60 @@ def passed(check_type: CheckType) -> CheckResult:
     )
 
 
+def skipped(check_type: CheckType, blocked_by: CheckResult) -> CheckResult:
+    return CheckResult.from_measurement(
+        Measurement.skipped_after(check_type, blocked_by), started_at=1.0, finished_at=1.1
+    )
+
+
 class TestProblems:
     def test_lower_failures_are_hidden_behind_a_higher_success(self):
         latest = {
-            CheckType.HTTP: passed(CheckType.HTTP),
-            CheckType.TCP: passed(CheckType.TCP),
-            CheckType.ICMP: failed(CheckType.ICMP, "Host unreachable"),
+            LayerKey(CheckType.HTTP): passed(CheckType.HTTP),
+            LayerKey(CheckType.TCP, 443): passed(CheckType.TCP),
+            LayerKey(CheckType.ICMP): failed(CheckType.ICMP, "Host unreachable"),
         }
         assert problems_for(latest, icmp_available=True) == []
 
     def test_failures_above_the_highest_success_are_reported(self):
         latest = {
-            CheckType.HTTP: failed(CheckType.HTTP, "HTTP 503"),
-            CheckType.TCP: passed(CheckType.TCP),
-            CheckType.ICMP: failed(CheckType.ICMP, "Host unreachable"),
+            LayerKey(CheckType.HTTP): failed(CheckType.HTTP, "HTTP 503"),
+            LayerKey(CheckType.TCP, 443): passed(CheckType.TCP),
+            LayerKey(CheckType.ICMP): failed(CheckType.ICMP, "Host unreachable"),
         }
         assert problems_for(latest, icmp_available=True) == ["HTTP: HTTP 503"]
 
     def test_everything_failing_is_all_reported_in_priority_order(self):
         latest = {
-            CheckType.ICMP: failed(CheckType.ICMP, "Host unreachable"),
-            CheckType.DNS: failed(CheckType.DNS, "NXDOMAIN"),
+            LayerKey(CheckType.ICMP): failed(CheckType.ICMP, "Host unreachable"),
+            LayerKey(CheckType.DNS): failed(CheckType.DNS, "NXDOMAIN"),
         }
         assert problems_for(latest, icmp_available=True) == [
             "DNS: NXDOMAIN",
             "ICMP: Host unreachable",
         ]
 
+    def test_skipped_layers_report_only_the_layer_that_failed(self):
+        tcp = failed(CheckType.TCP, "Connection refused on port 443")
+        latest = {
+            LayerKey(CheckType.DNS): passed(CheckType.DNS),
+            LayerKey(CheckType.TCP, 443): tcp,
+            LayerKey(CheckType.TLS): skipped(CheckType.TLS, tcp),
+            LayerKey(CheckType.HTTP): skipped(CheckType.HTTP, tcp),
+            LayerKey(CheckType.ICMP): passed(CheckType.ICMP),
+        }
+        assert problems_for(latest, icmp_available=True) == ["TCP: Connection refused on port 443"]
+
+    def test_a_closed_port_is_reported_next_to_an_open_one(self):
+        latest = {
+            LayerKey(CheckType.DNS): passed(CheckType.DNS),
+            LayerKey(CheckType.TCP, 443): passed(CheckType.TCP),
+            LayerKey(CheckType.TCP, 80): failed(CheckType.TCP, "Connection refused on port 80"),
+            LayerKey(CheckType.ICMP): failed(CheckType.ICMP, "Host unreachable"),
+        }
+        assert problems_for(latest, icmp_available=True) == ["TCP: Connection refused on port 80"]
+
     def test_icmp_failures_are_dropped_while_icmp_is_unavailable(self):
-        latest = {CheckType.ICMP: failed(CheckType.ICMP, "ICMP unavailable")}
+        latest = {LayerKey(CheckType.ICMP): failed(CheckType.ICMP, "ICMP unavailable")}
         assert problems_for(latest, icmp_available=False) == []
         assert problems_for(latest, icmp_available=True) == ["ICMP: ICMP unavailable"]

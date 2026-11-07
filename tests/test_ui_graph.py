@@ -1,5 +1,6 @@
 """Tests for graph rendering."""
 
+import re
 import threading
 import time
 from io import StringIO
@@ -9,9 +10,9 @@ from rich.console import Console
 
 from hydraping.core.config import Config
 from hydraping.core.engine import Engine
-from hydraping.core.models import CheckResult, CheckType, Endpoint
+from hydraping.core.models import CheckResult, CheckType, Endpoint, Measurement
 from hydraping.tui.dashboard import Dashboard
-from hydraping.tui.graph import LatencyGraph
+from hydraping.tui.graph import LatencyGraph, failure_char
 
 
 def icmp_ok(latency_ms: float) -> CheckResult:
@@ -26,13 +27,24 @@ def icmp_ok(latency_ms: float) -> CheckResult:
 
 
 def icmp_failed() -> CheckResult:
+    return failed(CheckType.ICMP, "Timeout")
+
+
+def failed(check_type: CheckType, message: str) -> CheckResult:
     now = time.time()
     return CheckResult(
-        check_type=CheckType.ICMP,
+        check_type=check_type,
         success=False,
-        error_message="Timeout",
+        error_message=message,
         started_at=now - 0.01,
         finished_at=now,
+    )
+
+
+def skipped(check_type: CheckType, blocked_by: CheckResult) -> CheckResult:
+    now = time.time()
+    return CheckResult.from_measurement(
+        Measurement.skipped_after(check_type, blocked_by), started_at=now - 0.01, finished_at=now
     )
 
 
@@ -106,7 +118,32 @@ class TestLatencyGraph:
         assert "·" in rendered.plain
 
 
-GRAPH_CHARS = set(LatencyGraph.BLOCKS) | {"!"}
+class TestFailureLetters:
+    """A failed bucket names the layer that broke."""
+
+    def test_each_chain_layer_has_a_letter(self):
+        assert failure_char(failed(CheckType.DNS, "x")) == "D"
+        assert failure_char(failed(CheckType.TCP, "x")) == "T"
+        assert failure_char(failed(CheckType.TLS, "x")) == "S"
+        assert failure_char(failed(CheckType.HTTP, "x")) == "H"
+
+    def test_checks_without_layers_keep_the_exclamation_mark(self):
+        assert failure_char(failed(CheckType.ICMP, "x")) == "!"
+        assert failure_char(failed(CheckType.UDP, "x")) == "!"
+
+    def test_skipped_primary_layer_shows_the_layer_that_blocked_it(self):
+        tcp = failed(CheckType.TCP, "refused")
+        assert failure_char(skipped(CheckType.HTTP, tcp)) == "T"
+        assert failure_char(skipped(CheckType.TLS, tcp)) == "T"
+
+    def test_graph_renders_the_letters_in_red(self):
+        dns = failed(CheckType.DNS, "NXDOMAIN")
+        rendered = LatencyGraph().render([icmp_ok(5.0), dns, skipped(CheckType.HTTP, dns), None])
+        assert rendered.plain[1:3] == "DD"
+        assert all(span.style == "red" for span in rendered.spans if span.start in (1, 2))
+
+
+GRAPH_CHARS = set(LatencyGraph.BLOCKS) | {"!"} | set("DTSH")
 
 
 def _dashboard() -> Dashboard:
@@ -146,21 +183,21 @@ class TestDashboardWidth:
         engine = Engine(Config(endpoints=[endpoint]))
         engine.store.apply(0, [icmp_ok(12.0)])
 
-        lines = _render_lines(Dashboard(engine), 65)
+        lines = _render_lines(Dashboard(engine), 66)
 
         [row] = [line for line in lines if "12.0ms" in line]
-        assert cell_len(row) <= 65
+        assert cell_len(row) <= 66
         assert "jumpbox" in row and "…" in row
         graph = "".join(char for char in row if char in GRAPH_CHARS)
-        # 65 columns minus 26 fixed and the 19 left for the shrunk name.
+        # 66 columns minus 27 fixed and the 19 left for the shrunk name.
         assert len(graph) == 20
         assert graph[-1] in LatencyGraph.BLOCKS[1:], "the newest bucket is the rightmost cell"
 
     def test_narrow_terminal_shows_message_instead_of_raising(self):
         lines = _render_lines(_dashboard(), 50)
 
-        # The names shrink to the 10-column floor: 10 + 26 fixed + 20 graph = 56.
-        assert lines == ["Terminal too narrow: 50 columns, needs 56"]
+        # The names shrink to the 10-column floor: 10 + 27 fixed + 20 graph = 57.
+        assert lines == ["Terminal too narrow: 50 columns, needs 57"]
 
     def test_narrow_message_fits_on_one_line(self):
         lines = _render_lines(_dashboard(), 30)
@@ -196,3 +233,36 @@ class TestDashboardWidth:
         assert row.lstrip().startswith("192.0.2.1") and "(ICMP)" in row
         assert row.rstrip().endswith("(ICMP)")
         assert any("192.0.2.1: ICMP: Timeout" in line for line in lines)
+
+    def test_skipped_primary_layer_names_the_layer_that_failed(self):
+        config = Config(endpoints=[Endpoint.parse("https://example.com/")])
+        engine = Engine(config)
+        tcp = failed(CheckType.TCP, "Connection refused on port 443")
+        engine.store.apply(0, [tcp, skipped(CheckType.TLS, tcp), skipped(CheckType.HTTP, tcp)])
+
+        lines = _render_lines(Dashboard(engine), 80)
+
+        [row] = [line for line in lines if "FAIL" in line]
+        assert re.search(r"FAIL\s+\(TCP\)$", row.rstrip()), row
+        assert "T" in row
+        problems = [line for line in lines if line.startswith("  •")]
+        assert problems == ["  • https://example.com/: TCP: Connection refused on port 443"]
+
+    def test_five_digit_port_fits_the_protocol_column(self):
+        config = Config(endpoints=[Endpoint.parse("127.0.0.1:65535")])
+        engine = Engine(config)
+        now = time.time()
+        tcp = CheckResult(
+            check_type=CheckType.TCP,
+            success=True,
+            latency_ms=1.0,
+            port=65535,
+            started_at=now - 0.01,
+            finished_at=now,
+        )
+        engine.store.apply(0, [tcp])
+
+        lines = _render_lines(Dashboard(engine), 80)
+
+        [row] = [line for line in lines if "1.0ms" in line]
+        assert row.rstrip().endswith("(TCP:65535)"), row

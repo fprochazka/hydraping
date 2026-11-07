@@ -1,6 +1,6 @@
 """Tests for the bucket store, with explicit timestamps."""
 
-from hydraping.core.models import CheckResult, CheckType
+from hydraping.core.models import CheckResult, CheckType, LayerKey
 from hydraping.core.store import HISTORY_BUCKETS, BucketStore, LayerHistory, bucket_index
 
 
@@ -48,7 +48,8 @@ class TestLayerHistory:
         assert (bucket.ok_count, bucket.failed_count) == (1, 0)
 
     def test_equal_start_times_are_both_kept(self):
-        # Two schedules writing the same layer (TCP 80 and 443) can start in the same instant.
+        # Two chains writing the same DNS layer (the TCP 80 and 443 chains of a domain) can start
+        # in the same instant.
         history = LayerHistory(bucket_seconds=5.0)
         first = result(100.0, 100.1, latency_ms=1.0)
         second = result(100.0, 100.2, latency_ms=2.0)
@@ -124,5 +125,25 @@ class TestBucketStore:
         store.apply(1, [result(100.0, 100.1)])
 
         assert store.endpoints[0].layers == {}
-        assert CheckType.ICMP in store.endpoints[1].layers
-        assert store.endpoints[1].layers[CheckType.ICMP].latest is not None
+        assert LayerKey(CheckType.ICMP) in store.endpoints[1].layers
+        assert store.endpoints[1].layers[LayerKey(CheckType.ICMP)].latest is not None
+
+    def test_tcp_results_are_kept_per_port(self):
+        def tcp(port: int, started_at: float) -> CheckResult:
+            return CheckResult(
+                check_type=CheckType.TCP,
+                success=True,
+                latency_ms=1.0,
+                port=port,
+                started_at=started_at,
+                finished_at=started_at + 0.1,
+            )
+
+        store = BucketStore(endpoint_count=1, bucket_seconds=5.0)
+        store.apply(0, [tcp(80, 100.0)])
+        store.apply(0, [tcp(443, 101.0)])
+
+        layers = store.endpoints[0].layers
+        assert set(layers) == {LayerKey(CheckType.TCP, 80), LayerKey(CheckType.TCP, 443)}
+        assert layers[LayerKey(CheckType.TCP, 80)].latest.port == 80
+        assert layers[LayerKey(CheckType.TCP, 443)].latest.port == 443

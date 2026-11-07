@@ -18,7 +18,8 @@ class UDPChecker(BaseChecker):
     ) -> Measurement:
         """Perform UDP connectivity check.
 
-        Sends a probe packet and waits for any response.
+        Sends a probe packet and waits for any response. The socket setup and the wait for the
+        answer share one deadline of ``timeout`` seconds.
         Note: Many UDP services require protocol-specific data, so this
         check may not work for all services.
 
@@ -32,7 +33,8 @@ class UDPChecker(BaseChecker):
             start_time = time.perf_counter()
 
             # Create UDP endpoint connection
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self.timeout
             transport, protocol = await asyncio.wait_for(
                 loop.create_datagram_endpoint(
                     lambda: UDPProbeProtocol(),
@@ -47,7 +49,7 @@ class UDPChecker(BaseChecker):
             # Wait for response
             try:
                 response_received = await asyncio.wait_for(
-                    protocol.response_received, timeout=self.timeout
+                    protocol.response_received, timeout=max(deadline - loop.time(), 0.0)
                 )
 
                 end_time = time.perf_counter()

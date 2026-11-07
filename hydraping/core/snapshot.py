@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from hydraping.core.models import CheckResult, CheckType, Endpoint
+from hydraping.core.models import CheckResult, CheckType, Endpoint, LayerKey
 from hydraping.core.store import Bucket
 
 
@@ -10,9 +10,13 @@ from hydraping.core.store import Bucket
 class LayerView:
     """One layer of one endpoint: its latest result and the last N buckets, oldest first."""
 
-    check_type: CheckType
+    key: LayerKey
     latest: CheckResult | None
     buckets: tuple[Bucket | None, ...]
+
+    @property
+    def check_type(self) -> CheckType:
+        return self.key.check_type
 
     def results(self) -> list[CheckResult | None]:
         """Return the last result of each bucket, which is what the graph draws."""
@@ -24,9 +28,9 @@ class EndpointSnapshot:
     """One row of the display."""
 
     endpoint: Endpoint
-    primary: CheckType
+    primary: LayerKey
     # Read-only by convention: frontends never write into a snapshot.
-    layers: dict[CheckType, LayerView]
+    layers: dict[LayerKey, LayerView]
     # The latest result of the primary layer; what the latency column shows.
     current: CheckResult | None
     # Problem lines after hierarchy suppression, without the endpoint name.

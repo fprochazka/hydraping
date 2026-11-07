@@ -5,12 +5,11 @@ import logging
 import math
 import threading
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 
-from hydraping.core.checkers.dns import DNSChecker
-from hydraping.core.checkers.http import HTTPChecker
+from hydraping.core.checkers.connection import ConnectionChecker, ConnectionTarget, HTTPRequest
 from hydraping.core.checkers.icmp import ICMPChecker
-from hydraping.core.checkers.tcp import TCPChecker
 from hydraping.core.checkers.udp import UDPChecker
 from hydraping.core.config import Config
 from hydraping.core.models import (
@@ -22,6 +21,7 @@ from hydraping.core.models import (
     HTTPEndpoint,
     IPEndpoint,
     IPPortEndpoint,
+    LayerKey,
     Measurement,
     UDPPortEndpoint,
     _is_ip_address,
@@ -143,15 +143,16 @@ class Engine:
         checks = config.checks
 
         self.icmp_checker = ICMPChecker(timeout=checks.timeout_seconds)
-        self.dns_checker = DNSChecker(
+        self.udp_checker = UDPChecker(timeout=checks.timeout_seconds)
+        # getaddrinfo blocks a thread and cannot be interrupted. On its own executor, stop() can
+        # drop it without waiting; on the loop's default executor, asyncio.run() would wait for a
+        # hanging system resolver before returning.
+        self.resolver_executor = ThreadPoolExecutor(thread_name_prefix="hydraping-resolver")
+        self.connection_checker = ConnectionChecker(
             timeout=checks.timeout_seconds,
             nameservers=config.dns.servers or None,
-        )
-        self.tcp_checker = TCPChecker(timeout=checks.timeout_seconds)
-        self.udp_checker = UDPChecker(timeout=checks.timeout_seconds)
-        self.http_checker = HTTPChecker(
-            timeout=checks.timeout_seconds,
-            success_status_max=checks.http_success_status_max,
+            http_success_status_max=checks.http_success_status_max,
+            resolver_executor=self.resolver_executor,
         )
 
         self.store = BucketStore(len(self.endpoints), checks.bucket_seconds)
@@ -167,56 +168,63 @@ class Engine:
     # -- schedules ---------------------------------------------------------------------------
 
     def _schedules_for(self, index: int, endpoint: Endpoint) -> list[ProbeSchedule]:
-        def schedule(check_type: CheckType, probe: Probe, label: str = "") -> ProbeSchedule:
-            name = f"{endpoint.display_name} {check_type.value}{label}"
+        def schedule(layers: Sequence[CheckType], probe: Probe, label: str = "") -> ProbeSchedule:
+            name = f"{endpoint.display_name} {'+'.join(layer.value for layer in layers)}{label}"
             return ProbeSchedule(
                 name=name,
-                probe=self._guarded(check_type, probe),
+                probe=self._guarded(layers, probe),
                 interval=self.config.checks.probe_interval_seconds,
                 timeout=self.config.checks.timeout_seconds,
                 on_results=lambda results: self.store.apply(index, results),
             )
 
+        def chain(target: ConnectionTarget, label: str = "") -> ProbeSchedule:
+            return schedule(target.layers(), self._connection_probe(target), label)
+
+        icmp = [CheckType.ICMP]
         schedules: list[ProbeSchedule] = []
         if isinstance(endpoint, IPEndpoint):
-            schedules.append(schedule(CheckType.ICMP, self._icmp_probe(endpoint.ip)))
+            schedules.append(schedule(icmp, self._icmp_probe(endpoint.ip)))
         elif isinstance(endpoint, IPPortEndpoint):
-            schedules.append(schedule(CheckType.ICMP, self._icmp_probe(endpoint.ip)))
-            schedules.append(schedule(CheckType.TCP, self._tcp_probe(endpoint.ip, endpoint.port)))
+            schedules.append(schedule(icmp, self._icmp_probe(endpoint.ip)))
+            schedules.append(chain(ConnectionTarget(endpoint.ip, endpoint.port)))
         elif isinstance(endpoint, UDPPortEndpoint):
-            schedules.append(schedule(CheckType.ICMP, self._icmp_probe(endpoint.ip)))
+            schedules.append(schedule(icmp, self._icmp_probe(endpoint.ip)))
             schedules.append(
                 schedule(
-                    CheckType.UDP,
+                    [CheckType.UDP],
                     self._udp_probe(endpoint.ip, endpoint.port, endpoint.probe_data),
                 )
             )
         elif isinstance(endpoint, DomainEndpoint):
-            schedules.append(
-                schedule(CheckType.DNS, self._dns_probe(endpoint.domain, endpoint.ip_version))
-            )
-            schedules.append(schedule(CheckType.ICMP, self._icmp_probe(endpoint.domain)))
-            ports = [endpoint.port] if endpoint.port_specified else [80, 443]
-            for port in ports:
-                schedules.append(
-                    schedule(CheckType.TCP, self._tcp_probe(endpoint.domain, port), f":{port}")
-                )
+            schedules.append(schedule(icmp, self._icmp_probe(endpoint.domain, endpoint.ip_version)))
+            # Without a port, the chains for 80 and 443 share the DNS layer (last result wins) and
+            # each writes its own TCP layer, keyed by port.
+            for port in endpoint.tcp_ports():
+                target = ConnectionTarget(endpoint.domain, port, ip_version=endpoint.ip_version)
+                schedules.append(chain(target, f":{port}"))
         elif isinstance(endpoint, HTTPEndpoint):
-            schedules.append(
-                schedule(CheckType.DNS, self._dns_probe(endpoint.host, endpoint.ip_version))
+            schedules.append(schedule(icmp, self._icmp_probe(endpoint.host, endpoint.ip_version)))
+            target = ConnectionTarget(
+                endpoint.host,
+                endpoint.port,
+                ip_version=endpoint.ip_version,
+                tls=endpoint.uses_tls,
+                insecure=endpoint.insecure,
+                http=HTTPRequest(path=endpoint.path, scheme=endpoint.scheme),
             )
-            schedules.append(schedule(CheckType.ICMP, self._icmp_probe(endpoint.host)))
-            schedules.append(schedule(CheckType.TCP, self._tcp_probe(endpoint.host, endpoint.port)))
-            schedules.append(schedule(CheckType.HTTP, self._http_probe(endpoint.url)))
+            schedules.append(chain(target))
         else:
             raise TypeError(f"Unsupported endpoint type: {type(endpoint).__name__}")
         return schedules
 
     @staticmethod
-    def _guarded(check_type: CheckType, probe: Probe) -> Probe:
+    def _guarded(layers: Sequence[CheckType], probe: Probe) -> Probe:
         """Turn an unexpected exception in a checker into a failed measurement.
 
-        A checker bug must show up as a red cell with its message, not as a silent gap.
+        A checker bug must show up as a red cell with its message, not as a silent gap. The first
+        layer carries the failure and the other layers of the probe are skipped, as after any
+        failure.
         """
 
         async def guarded() -> Sequence[Measurement]:
@@ -225,47 +233,47 @@ class Engine:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                return [
-                    Measurement(
-                        check_type=check_type,
-                        success=False,
-                        error_message=f"Unexpected error: {e}",
-                    )
-                ]
+                failed = Measurement(
+                    check_type=layers[0],
+                    success=False,
+                    error_message=f"Unexpected error: {e}",
+                )
+                return [failed] + [Measurement.skipped_after(layer, failed) for layer in layers[1:]]
 
         return guarded
 
-    def _icmp_probe(self, target: str) -> Probe:
+    def _icmp_probe(self, host: str, ip_version: int | None = None) -> Probe:
         async def probe() -> Sequence[Measurement]:
-            icmp_target = target
-            if not _is_ip_address(target):
-                # Ping what DNS resolved, so the ICMP and DNS layers agree on the address.
-                icmp_target = self.dns_checker.get_last_resolved_ip(target) or target
-            return [await self.icmp_checker.check(icmp_target)]
+            target = self._icmp_target(host, ip_version)
+            if target is None:
+                return []
+            return [await self.icmp_checker.check(target)]
 
         return probe
 
-    def _dns_probe(self, target: str, ip_version: int | None) -> Probe:
-        async def probe() -> Sequence[Measurement]:
-            return [await self.dns_checker.check(target, ip_version)]
+    def _icmp_target(self, host: str, ip_version: int | None) -> str | None:
+        """Return the address to ping for ``host``, or None while its chain has not resolved it.
 
-        return probe
+        ICMP never resolves a name itself. The lookup would run on the loop's default executor,
+        which ``asyncio.run()`` waits for on shutdown, so a hanging resolver would block ``stop()``.
+        Until the chain has resolved the name, the ICMP schedule records nothing for its ticks.
 
-    def _tcp_probe(self, host: str, port: int) -> Probe:
+        The chain of an ``ip_version = 6`` endpoint resolves to an IPv6 address, and its ICMP
+        schedule must ping that one, not what the IPv4 twin of the same host resolved.
+        """
+        if _is_ip_address(host):
+            return host
+        return self.connection_checker.get_last_resolved_ip(host, ip_version)
+
+    def _connection_probe(self, target: ConnectionTarget) -> Probe:
         async def probe() -> Sequence[Measurement]:
-            return [await self.tcp_checker.check(host, port)]
+            return await self.connection_checker.check(target)
 
         return probe
 
     def _udp_probe(self, host: str, port: int, probe_data: bytes) -> Probe:
         async def probe() -> Sequence[Measurement]:
             return [await self.udp_checker.check(host, port, probe_data)]
-
-        return probe
-
-    def _http_probe(self, url: str) -> Probe:
-        async def probe() -> Sequence[Measurement]:
-            return [await self.http_checker.check(url)]
 
         return probe
 
@@ -315,6 +323,8 @@ class Engine:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            # A lookup still running in a resolver thread is left to finish on its own.
+            self.resolver_executor.shutdown(wait=False, cancel_futures=True)
 
     # -- reading -----------------------------------------------------------------------------
 
@@ -341,15 +351,11 @@ class Engine:
     ) -> EndpointSnapshot:
         history = self.store.endpoints[index]
         layers = {
-            check_type: LayerView(
-                check_type=check_type,
-                latest=layer.latest,
-                buckets=layer.view(now, columns),
-            )
-            for check_type, layer in history.layers.items()
+            key: LayerView(key=key, latest=layer.latest, buckets=layer.view(now, columns))
+            for key, layer in history.layers.items()
         }
-        primary = endpoint.get_primary_check_type()
-        latest = {check_type: view.latest for check_type, view in layers.items()}
+        primary = endpoint.get_primary_layer()
+        latest = {key: view.latest for key, view in layers.items()}
         return EndpointSnapshot(
             endpoint=endpoint,
             primary=primary,
@@ -359,28 +365,34 @@ class Engine:
         )
 
 
-def problems_for(latest: dict[CheckType, CheckResult | None], icmp_available: bool) -> list[str]:
+def problems_for(latest: Mapping[LayerKey, CheckResult | None], icmp_available: bool) -> list[str]:
     """Return the problem lines for one endpoint from its latest result per layer.
 
     A failure below a layer that succeeded is noise (ICMP blocked by a firewall while HTTP works),
-    so only failures at or above the highest successful layer are reported. ICMP failures are
-    dropped while ICMP is unavailable on this machine; the frontend shows one line for that.
+    so only failures at or above the highest successful layer are reported. The two TCP layers of
+    a domain without a port sit on one level: a closed port 80 is reported next to a working port
+    443. A skipped layer is not a failure of its own: the layer that blocked it carries the problem
+    line. ICMP failures are dropped while ICMP is unavailable on this machine; the frontend shows
+    one line for that.
     """
-    highest_success_level = -1
-    for level, check_type in enumerate(CHECK_TYPE_PRIORITY):
-        result = latest.get(check_type)
-        if result is not None and result.success:
-            highest_success_level = level
-            break
+    level_of = {check_type: level for level, check_type in enumerate(CHECK_TYPE_PRIORITY)}
+    highest_success_level = min(
+        (
+            level_of[key.check_type]
+            for key, result in latest.items()
+            if result is not None and result.success
+        ),
+        default=-1,
+    )
 
     problems = []
-    for level, check_type in enumerate(CHECK_TYPE_PRIORITY):
-        result = latest.get(check_type)
-        if result is None or result.success:
+    for key in sorted(latest, key=lambda key: (level_of[key.check_type], key.port or 0)):
+        result = latest[key]
+        if result is None or result.success or result.skipped:
             continue
-        if check_type == CheckType.ICMP and not icmp_available:
+        if key.check_type == CheckType.ICMP and not icmp_available:
             continue
-        if 0 <= highest_success_level < level:
+        if 0 <= highest_success_level < level_of[key.check_type]:
             continue
-        problems.append(f"{check_type.value.upper()}: {result.error_message}")
+        problems.append(f"{key.check_type.value.upper()}: {result.error_message}")
     return problems

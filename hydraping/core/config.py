@@ -214,6 +214,17 @@ class Config:
 
                     endpoint.primary_check_type = check_type
 
+                insecure = ep_config.get("insecure", False)
+                if not isinstance(insecure, bool):
+                    raise ValueError(f"insecure must be true or false for {url}, got: {insecure!r}")
+                if insecure:
+                    if CheckType.TLS not in endpoint.get_check_types():
+                        raise ValueError(
+                            f"insecure = true has no effect on {url}: only https:// endpoints "
+                            "have a TLS layer"
+                        )
+                    endpoint.insecure = True
+
             else:
                 raise ValueError(
                     f"Invalid endpoint format: {ep_config}. "
@@ -267,6 +278,7 @@ _KNOWN_ENDPOINT_KEYS = {
     "protocol",
     "ip_version",
     "primary_check_type",
+    "insecure",
     "probe_hex",
     "probe_ascii",
 }
@@ -403,6 +415,7 @@ version = 2
 #   - UDP with ASCII:  { url = "1.1.1.1:123", protocol = "udp", probe_ascii = "hello" }
 #   - IPv4/IPv6 preference: { url = "google.com", ip_version = 4, name = "Google (IPv4)" }
 #   - Primary check type: { url = "example.com", primary_check_type = "tcp" }
+#   - Accept any certificate: { url = "https://router.example.internal/", insecure = true }
 #
 # Endpoint types:
 #   - IPv4 address: "8.8.8.8"
@@ -413,8 +426,11 @@ version = 2
 #   - Domain: "google.com"
 #   - HTTP/HTTPS URL: "https://example.com/health"
 #
+# An HTTPS URL is measured in layers: DNS, TCP connect, TLS handshake, HTTP response. A failed
+# column in the graph shows the letter of the layer that broke: D, T, S or H.
+#
 # Primary check type (optional):
-#   Override which check is graphed/displayed (dns/icmp/tcp/udp/http)
+#   Override which check is graphed/displayed (dns/icmp/tcp/udp/tls/http)
 #   All checks still run; only affects what's shown in graph and latency column
 #   Useful when ICMP is blocked but you want to monitor TCP/HTTP connectivity
 targets = [

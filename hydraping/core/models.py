@@ -3,6 +3,7 @@
 import ipaddress
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import NamedTuple
 from urllib.parse import urlparse
 
 
@@ -13,15 +14,42 @@ class CheckType(str, Enum):
     ICMP = "icmp"
     TCP = "tcp"
     UDP = "udp"
+    TLS = "tls"
     HTTP = "http"
 
 
 # Check type priority order (highest to lowest)
-# HTTP is the most comprehensive check (includes DNS, TCP, and application layer)
+# HTTP is the most comprehensive check (includes DNS, TCP, TLS and application layer)
+# TLS verifies the handshake and the certificate (includes DNS and TCP)
 # TCP/UDP verify port connectivity (includes DNS and transport layer)
 # DNS verifies name resolution only
 # ICMP is the basic network layer check
-CHECK_TYPE_PRIORITY = [CheckType.HTTP, CheckType.TCP, CheckType.UDP, CheckType.DNS, CheckType.ICMP]
+CHECK_TYPE_PRIORITY = [
+    CheckType.HTTP,
+    CheckType.TLS,
+    CheckType.TCP,
+    CheckType.UDP,
+    CheckType.DNS,
+    CheckType.ICMP,
+]
+
+
+class LayerKey(NamedTuple):
+    """Which history of an endpoint a result belongs to: the layer, and for TCP also the port.
+
+    A domain without a port probes TCP 80 and TCP 443 as two chains. Their TCP results must not
+    share one history, or the layer would alternate between OK and failed when one port is closed.
+    Every other layer has one history per endpoint, with ``port`` None.
+    """
+
+    check_type: CheckType
+    port: int | None = None
+
+    @property
+    def label(self) -> str:
+        """Return the layer's name as the UI shows it: ``TCP:443``, ``DNS``, ``HTTP``."""
+        name = self.check_type.value.upper()
+        return f"{name}:{self.port}" if self.port is not None else name
 
 
 class EndpointType(str, Enum):
@@ -49,12 +77,43 @@ class Measurement:
     port: int | None = None  # For TCP checks
     protocol: str | None = None  # For HTTP checks (http/https)
     resolved_ip: str | None = None  # For DNS checks - first resolved IP address
+    # A skipped layer did not run because ``blocked_by`` failed earlier in the same probe. It is
+    # not a failure of its own: problem lines report ``blocked_by``, and the graph shows its letter.
+    skipped: bool = False
+    blocked_by: CheckType | None = None
 
     def __post_init__(self):
         if self.success and self.latency_ms is None:
             raise ValueError("Successful check must have latency")
         if not self.success and self.error_message is None:
             raise ValueError("Failed check must have error message")
+        if self.skipped and (self.success or self.blocked_by is None):
+            raise ValueError("Skipped check must be unsuccessful and name the layer that failed")
+        if not self.skipped and self.blocked_by is not None:
+            raise ValueError("Only a skipped check names a blocking layer")
+
+    @property
+    def failed_layer(self) -> CheckType | None:
+        """Return the layer whose failure this result reports, or None for a success."""
+        if self.success:
+            return None
+        return self.blocked_by if self.skipped else self.check_type
+
+    @property
+    def layer_key(self) -> LayerKey:
+        """Return the history this result belongs to. Only TCP histories are split by port."""
+        return LayerKey(self.check_type, self.port if self.check_type == CheckType.TCP else None)
+
+    @classmethod
+    def skipped_after(cls, check_type: CheckType, failed: "Measurement") -> "Measurement":
+        """Return the measurement of a layer that did not run because ``failed`` failed."""
+        return cls(
+            check_type=check_type,
+            success=False,
+            error_message=f"Not run: {failed.check_type.value.upper()} failed",
+            skipped=True,
+            blocked_by=failed.failed_layer,
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -80,6 +139,8 @@ class CheckResult(Measurement):
             port=measurement.port,
             protocol=measurement.protocol,
             resolved_ip=measurement.resolved_ip,
+            skipped=measurement.skipped,
+            blocked_by=measurement.blocked_by,
             started_at=started_at,
             finished_at=finished_at,
         )
@@ -93,6 +154,8 @@ class Endpoint:
     custom_name: str | None = field(default=None, kw_only=True)
     ip_version: int | None = field(default=None, kw_only=True)  # 4 or 6
     primary_check_type: CheckType | None = field(default=None, kw_only=True)
+    # Accept any certificate in the TLS layer. Only HTTPS endpoints have one.
+    insecure: bool = field(default=False, kw_only=True)
 
     def __post_init__(self):
         """Initialize endpoint type - to be overridden by subclasses."""
@@ -106,6 +169,21 @@ class Endpoint:
         if self.custom_name:
             return self.custom_name
         return self.raw
+
+    def get_primary_check_type(self) -> CheckType:
+        """Return the check type the graph and latency column show."""
+        raise NotImplementedError
+
+    def get_primary_layer(self) -> LayerKey:
+        """Return the layer the graph and latency column show: the primary check type, plus the
+        port when that is TCP, so a domain without a port graphs one of its two TCP histories."""
+        check_type = self.get_primary_check_type()
+        port = self.primary_tcp_port() if check_type == CheckType.TCP else None
+        return LayerKey(check_type, port)
+
+    def primary_tcp_port(self) -> int | None:
+        """Return the port of the TCP layer to show, or None for an endpoint without one."""
+        return None
 
     @staticmethod
     def parse(endpoint_str: str) -> "Endpoint":
@@ -213,6 +291,9 @@ class IPPortEndpoint(Endpoint):
         """Return the primary check type to display in graph/latency."""
         return self.primary_check_type if self.primary_check_type else CheckType.TCP
 
+    def primary_tcp_port(self) -> int | None:
+        return self.port
+
 
 @dataclass
 class UDPPortEndpoint(Endpoint):
@@ -289,6 +370,14 @@ class DomainEndpoint(Endpoint):
         # For plain domain without port, use ICMP
         return CheckType.ICMP
 
+    def tcp_ports(self) -> list[int]:
+        """Return the ports the TCP chains probe: the given one, or 80 and 443 without a port."""
+        return [self.port] if self.port_specified else [80, 443]
+
+    def primary_tcp_port(self) -> int:
+        """Return the port whose TCP history is shown: the given one, or 443 without a port."""
+        return self.tcp_ports()[-1]
+
 
 @dataclass
 class HTTPEndpoint(Endpoint):
@@ -319,22 +408,36 @@ class HTTPEndpoint(Endpoint):
         else:
             port = 80
 
+        # The request target keeps the query string: "/health?probe=1" is a different URL.
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+
         return HTTPEndpoint(
             raw=url,
             url=url,
             scheme=parsed.scheme,
             host=parsed.hostname or parsed.netloc,
             port=port,
-            path=parsed.path or "/",
+            path=path,
         )
+
+    @property
+    def uses_tls(self) -> bool:
+        return self.scheme == "https"
 
     def get_check_types(self) -> list[CheckType]:
         """Return list of check types applicable to this endpoint."""
+        if self.uses_tls:
+            return [CheckType.DNS, CheckType.ICMP, CheckType.TCP, CheckType.TLS, CheckType.HTTP]
         return [CheckType.DNS, CheckType.ICMP, CheckType.TCP, CheckType.HTTP]
 
     def get_primary_check_type(self) -> CheckType:
         """Return the primary check type to display in graph/latency."""
         return self.primary_check_type if self.primary_check_type else CheckType.HTTP
+
+    def primary_tcp_port(self) -> int:
+        return self.port
 
 
 def _is_ip_address(s: str) -> bool:

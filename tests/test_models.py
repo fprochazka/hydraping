@@ -11,6 +11,7 @@ from hydraping.core.models import (
     HTTPEndpoint,
     IPEndpoint,
     IPPortEndpoint,
+    LayerKey,
     Measurement,
     UDPPortEndpoint,
 )
@@ -177,6 +178,54 @@ class TestPrimaryCheckType:
         endpoint = HTTPEndpoint.from_string("https://example.com")
         assert endpoint.get_primary_check_type() == CheckType.HTTP
 
+    def test_primary_layer_carries_the_port_only_for_tcp(self):
+        assert Endpoint.parse("192.0.2.1").get_primary_layer() == LayerKey(CheckType.ICMP)
+        assert Endpoint.parse("192.0.2.1:22").get_primary_layer() == LayerKey(CheckType.TCP, 22)
+        assert Endpoint.parse("example.com:8080").get_primary_layer() == LayerKey(
+            CheckType.TCP, 8080
+        )
+        https = Endpoint.parse("https://example.com:8443/")
+        assert https.get_primary_layer() == LayerKey(CheckType.HTTP)
+        https.primary_check_type = CheckType.TCP
+        assert https.get_primary_layer() == LayerKey(CheckType.TCP, 8443)
+
+    def test_domain_without_a_port_probes_80_and_443_and_graphs_443_for_tcp(self):
+        endpoint = Endpoint.parse("example.com")
+        assert endpoint.tcp_ports() == [80, 443]
+        assert endpoint.get_primary_layer() == LayerKey(CheckType.ICMP)
+        endpoint.primary_check_type = CheckType.TCP
+        assert endpoint.get_primary_layer() == LayerKey(CheckType.TCP, 443)
+
+    def test_layer_key_of_a_measurement_splits_only_tcp_by_port(self):
+        tcp = Measurement(check_type=CheckType.TCP, success=True, latency_ms=1.0, port=443)
+        tls = Measurement(check_type=CheckType.TLS, success=True, latency_ms=1.0, port=443)
+        assert tcp.layer_key == LayerKey(CheckType.TCP, 443)
+        assert tls.layer_key == LayerKey(CheckType.TLS)
+        assert LayerKey(CheckType.TCP, 443).label == "TCP:443"
+        assert LayerKey(CheckType.DNS).label == "DNS"
+
+    def test_only_https_endpoints_have_a_tls_layer(self):
+        https = HTTPEndpoint.from_string("https://example.com/")
+        http = HTTPEndpoint.from_string("http://example.com/")
+        assert https.uses_tls and not http.uses_tls
+        assert https.get_check_types() == [
+            CheckType.DNS,
+            CheckType.ICMP,
+            CheckType.TCP,
+            CheckType.TLS,
+            CheckType.HTTP,
+        ]
+        assert http.get_check_types() == [
+            CheckType.DNS,
+            CheckType.ICMP,
+            CheckType.TCP,
+            CheckType.HTTP,
+        ]
+
+    def test_https_path_keeps_the_query_string(self):
+        endpoint = HTTPEndpoint.from_string("https://example.com/health?probe=1")
+        assert endpoint.path == "/health?probe=1"
+
 
 class TestCheckResult:
     """Test CheckResult validation."""
@@ -230,6 +279,30 @@ class TestCheckResult:
         assert result.success
         assert result.latency_ms == 10.5
 
+    def test_skipped_check_names_the_layer_that_failed(self):
+        tcp = Measurement(check_type=CheckType.TCP, success=False, error_message="refused")
+        http = Measurement.skipped_after(CheckType.HTTP, tcp)
+        assert http.skipped and not http.success
+        assert http.blocked_by == CheckType.TCP
+        assert http.failed_layer == CheckType.TCP
+        assert tcp.failed_layer == CheckType.TCP
+        ok = Measurement(check_type=CheckType.TCP, success=True, latency_ms=1.0)
+        assert ok.failed_layer is None
+
+        result = CheckResult.from_measurement(http, started_at=1.0, finished_at=1.1)
+        assert result.skipped and result.blocked_by == CheckType.TCP
+
+    def test_skipped_check_must_be_consistent(self):
+        with pytest.raises(ValueError, match="Skipped check"):
+            Measurement(check_type=CheckType.HTTP, success=False, error_message="x", skipped=True)
+        with pytest.raises(ValueError, match="Only a skipped check"):
+            Measurement(
+                check_type=CheckType.HTTP,
+                success=False,
+                error_message="x",
+                blocked_by=CheckType.TCP,
+            )
+
     def test_valid_failed_check(self):
         """Test creating valid failed check."""
         result = CheckResult(
@@ -246,11 +319,14 @@ class TestCheckResult:
 class TestCheckTypePriority:
     def test_check_type_priority_order(self):
         """Test that CHECK_TYPE_PRIORITY is correctly ordered."""
-        assert CHECK_TYPE_PRIORITY[0] == CheckType.HTTP
-        assert CHECK_TYPE_PRIORITY[1] == CheckType.TCP
-        assert CHECK_TYPE_PRIORITY[2] == CheckType.UDP
-        assert CHECK_TYPE_PRIORITY[3] == CheckType.DNS
-        assert CHECK_TYPE_PRIORITY[4] == CheckType.ICMP
+        assert CHECK_TYPE_PRIORITY == [
+            CheckType.HTTP,
+            CheckType.TLS,
+            CheckType.TCP,
+            CheckType.UDP,
+            CheckType.DNS,
+            CheckType.ICMP,
+        ]
 
 
 class TestUDPProbeData:
