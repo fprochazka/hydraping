@@ -41,6 +41,8 @@ uv tool install hydraping
 
 ## Usage
 
+`monitor` is the default command: bare `hydraping` runs it, the same as `hydraping monitor`, and `hydraping -- <name>` monitors a host named like a subcommand, for example `hydraping -- version`.
+
 ```bash
 # Start monitoring with configured endpoints
 hydraping

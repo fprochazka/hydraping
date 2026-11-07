@@ -7,15 +7,62 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from typer.core import TyperGroup
 
 from hydraping.core.config import Config, create_default_config, get_default_config_path
 from hydraping.core.models import Endpoint
 from hydraping.core.orchestrator import CheckOrchestrator
 from hydraping.tui.dashboard import Dashboard
 
+DEFAULT_COMMAND = "monitor"
+
+
+class DefaultCommandGroup(TyperGroup):
+    """Run the command named by the first positional argument, or ``monitor`` if it names none.
+
+    The monitor command takes a variadic list of endpoints. As a group callback argument, that
+    list would swallow subcommand names, so ``hydraping version`` would monitor a host called
+    "version". Routing happens here, before Click parses any parameter.
+    """
+
+    def parse_args(self, ctx: typer.Context, args: list[str]) -> list[str]:
+        # Everything after "--" is an endpoint, so "hydraping -- version" monitors "version".
+        has_separator = "--" in args
+        before_separator = args[: args.index("--")] if has_separator else args
+        position = self._first_positional(ctx, before_separator)
+        if position is not None and args[position] in self.commands:
+            # Options typed before the command name belong to that command.
+            args = [args[position], *args[:position], *args[position + 1 :]]
+        elif (
+            position is not None
+            or has_separator
+            or not set(before_separator) & set(ctx.help_option_names)
+        ):
+            args = [DEFAULT_COMMAND, *args]
+        return super().parse_args(ctx, args)
+
+    def _first_positional(self, ctx: typer.Context, args: list[str]) -> int | None:
+        """Return the index of the first argument that is not an option or an option value."""
+        monitor = self.commands[DEFAULT_COMMAND]
+        value_options = {
+            name
+            for param in monitor.get_params(ctx)
+            if param.param_type_name == "option" and not getattr(param, "is_flag", False)
+            for name in param.opts
+        }
+        index = 0
+        while index < len(args):
+            arg = args[index]
+            if not arg.startswith("-") or arg == "-":
+                return index
+            index += 2 if arg in value_options else 1
+        return None
+
+
 app = typer.Typer(
     name="hydraping",
     help="Multi-protocol connection tester with live terminal UI",
+    cls=DefaultCommandGroup,
     add_completion=False,
     rich_markup_mode=None,
     pretty_exceptions_enable=False,
@@ -24,9 +71,18 @@ app = typer.Typer(
 console = Console()
 
 
-@app.callback(invoke_without_command=True)
-def main(
-    ctx: typer.Context,
+def start_monitoring(cfg: Config) -> None:
+    """Run the live dashboard for ``cfg`` until Ctrl+C. Tests replace this to skip monitoring."""
+    orchestrator = CheckOrchestrator(cfg)
+    dashboard = Dashboard(orchestrator, console=console)
+    try:
+        asyncio.run(dashboard.run())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopped by user[/yellow]")
+
+
+@app.command(name=DEFAULT_COMMAND)
+def monitor(
     endpoints: Annotated[
         list[str] | None,
         typer.Argument(
@@ -46,10 +102,6 @@ def main(
     ] = None,
 ):
     """Start monitoring endpoints (default command)."""
-    # If a subcommand is invoked, don't run the main logic
-    if ctx.invoked_subcommand is not None:
-        return
-
     # Load base configuration
     if config is None:
         config = get_default_config_path()
@@ -71,14 +123,7 @@ def main(
             console.print(f"[red]Error parsing endpoint: {e}[/red]")
             raise typer.Exit(1) from None
 
-    orchestrator = CheckOrchestrator(cfg)
-    dashboard = Dashboard(orchestrator, console=console)
-
-    # Run the dashboard
-    try:
-        asyncio.run(dashboard.run())
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Stopped by user[/yellow]")
+    start_monitoring(cfg)
 
 
 @app.command()
