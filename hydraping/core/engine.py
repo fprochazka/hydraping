@@ -1,6 +1,7 @@
 """Continuous probing: a schedule per check, results into the bucket store, a loop in a thread."""
 
 import asyncio
+import dataclasses
 import logging
 import math
 import threading
@@ -8,10 +9,11 @@ import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
+from hydraping.core.chains import HopState, current_result, diagnose_chain
 from hydraping.core.checkers.connection import ConnectionChecker, ConnectionTarget, HTTPRequest
 from hydraping.core.checkers.icmp import ICMPChecker
 from hydraping.core.checkers.udp import UDPChecker
-from hydraping.core.config import Config
+from hydraping.core.config import Chain, Config
 from hydraping.core.models import (
     CHECK_TYPE_PRIORITY,
     CheckResult,
@@ -27,7 +29,7 @@ from hydraping.core.models import (
     _is_ip_address,
 )
 from hydraping.core.route import EgressInterfaces
-from hydraping.core.snapshot import EndpointSnapshot, EngineSnapshot, LayerView
+from hydraping.core.snapshot import ChainSnapshot, EndpointSnapshot, EngineSnapshot, LayerView
 from hydraping.core.store import BucketStore
 
 logger = logging.getLogger(__name__)
@@ -140,7 +142,16 @@ class Engine:
 
     def __init__(self, config: Config):
         self.config = config
+        # The standalone targets, which are the rows of the display.
         self.endpoints: list[Endpoint] = list(config.endpoints)
+        # Every distinct endpoint that gets probed; its position is its index in the store. A
+        # chain hop that measures the same thing as a target, or as a hop of another chain, shares
+        # its probes and its history, whatever name each place gives it.
+        self.measured: list[Endpoint] = []
+        self.target_indices = [self._measured_index(endpoint) for endpoint in self.endpoints]
+        self.chain_hop_indices = [
+            [self._measured_index(hop) for hop in chain.hops] for chain in config.chains
+        ]
         checks = config.checks
 
         self.icmp_checker = ICMPChecker(timeout=checks.timeout_seconds)
@@ -156,13 +167,13 @@ class Engine:
             resolver_executor=self.resolver_executor,
         )
 
-        self.store = BucketStore(len(self.endpoints), checks.bucket_seconds)
+        self.store = BucketStore(len(self.measured), checks.bucket_seconds)
         self.egress = EgressInterfaces()
-        # The outgoing interface per endpoint index, written by the egress loop under the store
+        # The outgoing interface per store index, written by the egress loop under the store
         # lock. An endpoint without a known address or route has no entry.
         self._interfaces: dict[int, str] = {}
         self.schedules: list[ProbeSchedule] = []
-        for index, endpoint in enumerate(self.endpoints):
+        for index, endpoint in enumerate(self.measured):
             self.schedules.extend(self._schedules_for(index, endpoint))
 
         self._thread: threading.Thread | None = None
@@ -171,6 +182,20 @@ class Engine:
         self._started = threading.Event()
 
     # -- schedules ---------------------------------------------------------------------------
+
+    def _measured_index(self, endpoint: Endpoint) -> int:
+        """Return the store index of ``endpoint``, adding it when nothing measures it yet."""
+
+        # The name and primary layer only change how a place shows the endpoint, and each place
+        # takes them from its own endpoint, so they don't make it a different measurement.
+        def key(endpoint: Endpoint) -> Endpoint:
+            return dataclasses.replace(endpoint, custom_name=None, primary_check_type=None)
+
+        for index, measured in enumerate(self.measured):
+            if key(measured) == key(endpoint):
+                return index
+        self.measured.append(endpoint)
+        return len(self.measured) - 1
 
     def _schedules_for(self, index: int, endpoint: Endpoint) -> list[ProbeSchedule]:
         def schedule(layers: Sequence[CheckType], probe: Probe, label: str = "") -> ProbeSchedule:
@@ -294,7 +319,7 @@ class Engine:
             await asyncio.sleep(self.config.checks.probe_interval_seconds)
 
     async def _refresh_interfaces(self) -> None:
-        addresses = [self._endpoint_address(endpoint) for endpoint in self.endpoints]
+        addresses = [self._endpoint_address(endpoint) for endpoint in self.measured]
         lookups = [
             self.egress.interface_for(address) if address is not None else _none()
             for address in addresses
@@ -372,7 +397,7 @@ class Engine:
     # -- reading -----------------------------------------------------------------------------
 
     def interfaces(self) -> dict[int, str]:
-        """Return the known outgoing interface per endpoint index. Thread-safe."""
+        """Return the known outgoing interface per store index. Thread-safe."""
         with self.store.lock:
             return dict(self._interfaces)
 
@@ -384,7 +409,11 @@ class Engine:
             icmp_available = self.icmp_checker.is_available()
             rows = tuple(
                 self._endpoint_snapshot(index, endpoint, columns, now, icmp_available)
-                for index, endpoint in enumerate(self.endpoints)
+                for index, endpoint in zip(self.target_indices, self.endpoints, strict=True)
+            )
+            chains = tuple(
+                self._chain_snapshot(chain, indices, columns, now, icmp_available)
+                for chain, indices in zip(self.config.chains, self.chain_hop_indices, strict=True)
             )
         return EngineSnapshot(
             taken_at=now,
@@ -392,7 +421,73 @@ class Engine:
             columns=columns,
             rows=rows,
             icmp_available=icmp_available,
+            chains=chains,
         )
+
+    def _chain_snapshot(
+        self, chain: Chain, indices: list[int], columns: int, now: float, icmp_available: bool
+    ) -> ChainSnapshot:
+        hops = [
+            self._endpoint_snapshot(index, hop, columns, now, icmp_available)
+            for index, hop in zip(indices, chain.hops, strict=True)
+        ]
+        states = [
+            self._hop_state(index, hop, now) for index, hop in zip(indices, hops, strict=True)
+        ]
+        diagnosis = diagnose_chain(states)
+        if diagnosis.broken_at is None:
+            reported = hops
+        else:
+            broken = hops[diagnosis.broken_at]
+            state = states[diagnosis.broken_at]
+            assert state.result is not None
+            # The diagnosis line already reports the layer that broke; the broken hop keeps its
+            # other problem lines. The hops after it are expected to fail with it, so their own
+            # lines are suppressed, while they keep being probed so a recovery shows up.
+            failed_key = (state.cause or state.result).layer_key
+            latest = {key: view.latest for key, view in broken.layers.items() if key != failed_key}
+            hops[diagnosis.broken_at] = dataclasses.replace(
+                broken, problems=tuple(problems_for(latest, icmp_available))
+            )
+            for after in range(diagnosis.broken_at + 1, len(hops)):
+                hops[after] = dataclasses.replace(hops[after], problems=())
+            reported = hops[: diagnosis.broken_at + 1]
+        problems = [diagnosis.message] if diagnosis.message else []
+        problems += [
+            f"{hop.endpoint.display_name}: {problem}"
+            for hop in reported
+            for problem in hop.problems
+        ]
+        return ChainSnapshot(
+            name=chain.name,
+            hops=tuple(hops),
+            broken_at=diagnosis.broken_at,
+            problems=tuple(problems),
+        )
+
+    def _hop_state(self, index: int, hop: EndpointSnapshot, now: float) -> HopState:
+        """Return the hop's primary layer result in the current bucket, for the chain diagnosis."""
+        layers = self.store.endpoints[index].layers
+        primary = layers.get(hop.primary)
+        result = current_result(primary.view(now, 2)) if primary is not None else None
+        cause = None
+        if result is not None and result.skipped:
+            # The layer that blocked the primary one, in the same probe: its error is the cause.
+            # A layer shared by two probes, such as the DNS layer of a domain's ports 80 and 443,
+            # may hold the other probe's result by now; then its latest failure is the cause.
+            failures = []
+            for key, layer in layers.items():
+                candidate = current_result(layer.view(now, 2))
+                if key.check_type != result.blocked_by or candidate is None or candidate.skipped:
+                    continue
+                if candidate.started_at == result.started_at:
+                    cause = candidate
+                    break
+                if not candidate.success:
+                    failures.append(candidate)
+            if cause is None and failures:
+                cause = max(failures, key=lambda failure: failure.started_at)
+        return HopState(name=hop.endpoint.display_name, result=result, cause=cause)
 
     def _endpoint_snapshot(
         self, index: int, endpoint: Endpoint, columns: int, now: float, icmp_available: bool

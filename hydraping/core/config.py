@@ -54,6 +54,18 @@ class UIConfig:
 
 
 @dataclass
+class Chain:
+    """Hops that depend on each other, in order: a hop is only reachable when the ones before are.
+
+    Each hop is measured like any endpoint. The chain adds the diagnosis: which hop is the first
+    one that is broken.
+    """
+
+    name: str
+    hops: list[Endpoint]
+
+
+@dataclass
 class Config:
     """Main configuration for HydraPing."""
 
@@ -61,6 +73,7 @@ class Config:
     dns: DNSConfig = field(default_factory=DNSConfig)
     checks: ChecksConfig = field(default_factory=ChecksConfig)
     ui: UIConfig = field(default_factory=UIConfig)
+    chains: list[Chain] = field(default_factory=list)
 
     @staticmethod
     def load(
@@ -102,138 +115,16 @@ class Config:
 
         _reject_unknown_keys(data, config_path)
 
-        # Parse endpoints
         endpoint_configs = data.get("endpoints", {}).get("targets", [])
-        if not endpoint_configs:
-            raise ValueError("No endpoints configured in 'endpoints.targets'")
-
-        endpoints = []
-        for ep_config in endpoint_configs:
-            if isinstance(ep_config, str):
-                # Simple string format - use URL as display name
-                endpoint = Endpoint.parse(ep_config)
-            elif isinstance(ep_config, dict):
-                # Object format with optional custom name, protocol, and IP version
-                url = ep_config.get("url")
-                if not url:
-                    raise ValueError(f"Endpoint object missing 'url' field: {ep_config}")
-
-                # Check if this is a UDP endpoint (protocol field)
-                protocol = ep_config.get("protocol", "tcp").lower()
-                if protocol == "udp":
-                    # Parse as UDP endpoint
-                    # URL format should be "ip:port" for UDP
-                    from hydraping.core.models import (
-                        UDPPortEndpoint,
-                        _is_ip_address,
-                        _validate_port,
-                    )
-
-                    # Parse IP:port
-                    if ":" in url:
-                        parts = url.rsplit(":", 1)
-                        if len(parts) == 2:
-                            ip_part, port_part = parts
-                            # Handle IPv6 bracket notation
-                            if ip_part.startswith("[") and ip_part.endswith("]"):
-                                ip_part = ip_part[1:-1]
-                            if _is_ip_address(ip_part):
-                                try:
-                                    port = int(port_part)
-                                    _validate_port(port)
-
-                                    # Parse optional probe_data (hex string or ASCII string)
-                                    probe_data = b""
-                                    probe_hex = ep_config.get("probe_hex")
-                                    probe_ascii = ep_config.get("probe_ascii")
-
-                                    if probe_hex:
-                                        # Parse hex string (e.g., "deadbeef")
-                                        try:
-                                            probe_data = bytes.fromhex(probe_hex)
-                                        except ValueError as e:
-                                            raise ValueError(
-                                                f"Invalid hex probe_hex for {url}: {e}"
-                                            ) from e
-                                    elif probe_ascii:
-                                        # Use ASCII string as-is
-                                        probe_data = probe_ascii.encode("ascii")
-
-                                    endpoint = UDPPortEndpoint(
-                                        raw=url, ip=ip_part, port=port, probe_data=probe_data
-                                    )
-                                except ValueError as e:
-                                    raise ValueError(f"Invalid UDP port in {url}: {e}") from e
-                            else:
-                                raise ValueError(
-                                    f"UDP endpoints require IP address, got: {ip_part}"
-                                )
-                        else:
-                            raise ValueError(
-                                f"UDP endpoint must be in format 'ip:port', got: {url}"
-                            )
-                    else:
-                        raise ValueError(f"UDP endpoint must include port, got: {url}")
-                else:
-                    # Regular endpoint (TCP/HTTP/ICMP)
-                    endpoint = Endpoint.parse(url)
-
-                # Set custom name if provided
-                custom_name = ep_config.get("name")
-                if custom_name:
-                    endpoint.custom_name = custom_name
-
-                # Set IP version preference if provided
-                ip_version = ep_config.get("ip_version")
-                if ip_version is not None:
-                    if ip_version not in (4, 6):
-                        raise ValueError(f"ip_version must be 4 or 6, got: {ip_version}")
-                    endpoint.ip_version = ip_version
-
-                # Set primary check type if provided
-                primary_check = ep_config.get("primary_check_type")
-                if primary_check:
-                    # Parse check type from string
-                    try:
-                        check_type = CheckType(primary_check.lower())
-                    except ValueError:
-                        valid_types = ", ".join([ct.value for ct in CheckType])
-                        raise ValueError(
-                            f"Invalid primary_check_type '{primary_check}' for {url}. "
-                            f"Valid values: {valid_types}"
-                        ) from None
-
-                    # Validate the check type is applicable to this endpoint
-                    applicable_checks = endpoint.get_check_types()
-                    if check_type not in applicable_checks:
-                        applicable_str = ", ".join([ct.value for ct in applicable_checks])
-                        raise ValueError(
-                            f"primary_check_type '{primary_check}' is not applicable "
-                            f"to endpoint {url}. This endpoint supports: {applicable_str}"
-                        )
-
-                    endpoint.primary_check_type = check_type
-
-                insecure = ep_config.get("insecure", False)
-                if not isinstance(insecure, bool):
-                    raise ValueError(f"insecure must be true or false for {url}, got: {insecure!r}")
-                if insecure:
-                    if CheckType.TLS not in endpoint.get_check_types():
-                        raise ValueError(
-                            f"insecure = true has no effect on {url}: only https:// endpoints "
-                            "have a TLS layer"
-                        )
-                    endpoint.insecure = True
-
-            else:
-                raise ValueError(
-                    f"Invalid endpoint format: {ep_config}. "
-                    "Expected string or object with 'url' field."
-                )
-            endpoints.append(endpoint)
-
-        if not endpoints:
-            raise ValueError("No valid endpoints after parsing")
+        endpoints = [_parse_endpoint(ep_config) for ep_config in endpoint_configs]
+        chains = [
+            Chain(name=chain["name"], hops=[_parse_endpoint(hop) for hop in chain["hops"]])
+            for chain in data.get("chains", [])
+        ]
+        if not endpoints and not chains:
+            raise ValueError(
+                f"No endpoints configured in {config_path}: add 'endpoints.targets' or [[chains]]"
+            )
 
         dns = DNSConfig(servers=data.get("dns", {}).get("servers", []))
 
@@ -254,7 +145,126 @@ class Config:
         ui_data = data.get("ui", {})
         ui = UIConfig(graph_width=ui_data.get("graph_width", 0))
 
-        return Config(endpoints=endpoints, dns=dns, checks=checks, ui=ui)
+        return Config(endpoints=endpoints, dns=dns, checks=checks, ui=ui, chains=chains)
+
+
+def _parse_endpoint(ep_config: object) -> Endpoint:
+    """Parse one entry of ``endpoints.targets`` or of a chain's ``hops``."""
+    if isinstance(ep_config, str):
+        # Simple string format - use URL as display name
+        endpoint = Endpoint.parse(ep_config)
+    elif isinstance(ep_config, dict):
+        # Object format with optional custom name, protocol, and IP version
+        url = ep_config.get("url")
+        if not url:
+            raise ValueError(f"Endpoint object missing 'url' field: {ep_config}")
+
+        # Check if this is a UDP endpoint (protocol field)
+        protocol = ep_config.get("protocol", "tcp").lower()
+        if protocol == "udp":
+            # Parse as UDP endpoint
+            # URL format should be "ip:port" for UDP
+            from hydraping.core.models import (
+                UDPPortEndpoint,
+                _is_ip_address,
+                _validate_port,
+            )
+
+            # Parse IP:port
+            if ":" in url:
+                parts = url.rsplit(":", 1)
+                if len(parts) == 2:
+                    ip_part, port_part = parts
+                    # Handle IPv6 bracket notation
+                    if ip_part.startswith("[") and ip_part.endswith("]"):
+                        ip_part = ip_part[1:-1]
+                    if _is_ip_address(ip_part):
+                        try:
+                            port = int(port_part)
+                            _validate_port(port)
+
+                            # Parse optional probe_data (hex string or ASCII string)
+                            probe_data = b""
+                            probe_hex = ep_config.get("probe_hex")
+                            probe_ascii = ep_config.get("probe_ascii")
+
+                            if probe_hex:
+                                # Parse hex string (e.g., "deadbeef")
+                                try:
+                                    probe_data = bytes.fromhex(probe_hex)
+                                except ValueError as e:
+                                    raise ValueError(f"Invalid hex probe_hex for {url}: {e}") from e
+                            elif probe_ascii:
+                                # Use ASCII string as-is
+                                probe_data = probe_ascii.encode("ascii")
+
+                            endpoint = UDPPortEndpoint(
+                                raw=url, ip=ip_part, port=port, probe_data=probe_data
+                            )
+                        except ValueError as e:
+                            raise ValueError(f"Invalid UDP port in {url}: {e}") from e
+                    else:
+                        raise ValueError(f"UDP endpoints require IP address, got: {ip_part}")
+                else:
+                    raise ValueError(f"UDP endpoint must be in format 'ip:port', got: {url}")
+            else:
+                raise ValueError(f"UDP endpoint must include port, got: {url}")
+        else:
+            # Regular endpoint (TCP/HTTP/ICMP)
+            endpoint = Endpoint.parse(url)
+
+        # Set custom name if provided
+        custom_name = ep_config.get("name")
+        if custom_name:
+            endpoint.custom_name = custom_name
+
+        # Set IP version preference if provided
+        ip_version = ep_config.get("ip_version")
+        if ip_version is not None:
+            if ip_version not in (4, 6):
+                raise ValueError(f"ip_version must be 4 or 6, got: {ip_version}")
+            endpoint.ip_version = ip_version
+
+        # Set primary check type if provided
+        primary_check = ep_config.get("primary_check_type")
+        if primary_check:
+            # Parse check type from string
+            try:
+                check_type = CheckType(primary_check.lower())
+            except ValueError:
+                valid_types = ", ".join([ct.value for ct in CheckType])
+                raise ValueError(
+                    f"Invalid primary_check_type '{primary_check}' for {url}. "
+                    f"Valid values: {valid_types}"
+                ) from None
+
+            # Validate the check type is applicable to this endpoint
+            applicable_checks = endpoint.get_check_types()
+            if check_type not in applicable_checks:
+                applicable_str = ", ".join([ct.value for ct in applicable_checks])
+                raise ValueError(
+                    f"primary_check_type '{primary_check}' is not applicable "
+                    f"to endpoint {url}. This endpoint supports: {applicable_str}"
+                )
+
+            endpoint.primary_check_type = check_type
+
+        insecure = ep_config.get("insecure", False)
+        if not isinstance(insecure, bool):
+            raise ValueError(f"insecure must be true or false for {url}, got: {insecure!r}")
+        if insecure:
+            if CheckType.TLS not in endpoint.get_check_types():
+                raise ValueError(
+                    f"insecure = true has no effect on {url}: only https:// endpoints "
+                    "have a TLS layer"
+                )
+            endpoint.insecure = True
+
+    else:
+        raise ValueError(
+            f"Invalid endpoint format: {ep_config}. Expected string or object with 'url' field."
+        )
+    return endpoint
 
 
 # Every key settings.toml may contain, per table. An unknown key is an error: a silently ignored
@@ -270,8 +280,9 @@ _KNOWN_TABLE_KEYS: dict[str, set[str]] = {
     },
     "ui": {"graph_width"},
 }
-# Top-level keys that are values, not tables.
-_KNOWN_TOP_LEVEL_VALUES = {"version"}
+# Top-level keys that are values, not tables. ``chains`` is an array of tables, checked on its own.
+_KNOWN_TOP_LEVEL_VALUES = {"version", "chains"}
+_KNOWN_CHAIN_KEYS = {"name", "hops"}
 _KNOWN_ENDPOINT_KEYS = {
     "url",
     "name",
@@ -301,20 +312,37 @@ def _reject_unknown_keys(data: dict, config_path: Path) -> None:
             if key not in _KNOWN_TABLE_KEYS[table_name]:
                 raise unknown(f"{table_name}.{key}")
 
-    targets = data.get("endpoints", {}).get("targets", [])
-    if not isinstance(targets, list):
-        # A string would otherwise be iterated as one endpoint per character.
-        raise ValueError(f"'endpoints.targets' must be a list in {config_path}")
-    for index, target in enumerate(targets):
-        if isinstance(target, str):
-            continue
-        if not isinstance(target, dict):
-            raise ValueError(
-                f"'endpoints.targets[{index}]' must be a string or a table in {config_path}"
-            )
-        for key in target:
-            if key not in _KNOWN_ENDPOINT_KEYS:
-                raise unknown(f"endpoints.targets[{index}].{key}")
+    def check_endpoints(endpoints: object, path: str) -> None:
+        if not isinstance(endpoints, list):
+            # A string would otherwise be iterated as one endpoint per character.
+            raise ValueError(f"'{path}' must be a list in {config_path}")
+        for index, endpoint in enumerate(endpoints):
+            if isinstance(endpoint, str):
+                continue
+            if not isinstance(endpoint, dict):
+                raise ValueError(f"'{path}[{index}]' must be a string or a table in {config_path}")
+            for key in endpoint:
+                if key not in _KNOWN_ENDPOINT_KEYS:
+                    raise unknown(f"{path}[{index}].{key}")
+
+    check_endpoints(data.get("endpoints", {}).get("targets", []), "endpoints.targets")
+
+    chains = data.get("chains", [])
+    if not isinstance(chains, list):
+        raise ValueError(f"'chains' must be an array of tables ([[chains]]) in {config_path}")
+    for index, chain in enumerate(chains):
+        path = f"chains[{index}]"
+        if not isinstance(chain, dict):
+            raise ValueError(f"'{path}' must be a table in {config_path}")
+        for key in chain:
+            if key not in _KNOWN_CHAIN_KEYS:
+                raise unknown(f"{path}.{key}")
+        name = chain.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"'{path}.name' must be a non-empty string in {config_path}")
+        if not chain.get("hops"):
+            raise ValueError(f"'{path}.hops' must list at least one hop in {config_path}")
+        check_endpoints(chain["hops"], f"{path}.hops")
 
 
 def _print_migration_notice(config_path: Path, backup_path: Path) -> None:
@@ -438,6 +466,20 @@ targets = [
     { url = "8.8.8.8", name = "Google DNS" },
     "google.com",
 ]
+
+# Chains (optional): hops that depend on each other, in order. Each hop is measured like a
+# target, and the chain reports the first hop that is broken, for example
+# "Company: broken at Jumpbox (TCP: Connection refused); Router, Internet OK".
+# Hops take the same formats as targets.
+#
+# [[chains]]
+# name = "Company"
+# hops = [
+#     { url = "router", name = "Router" },
+#     { url = "1.1.1.1", name = "Internet" },
+#     { url = "jumpbox.example.ts.net:22", name = "Jumpbox" },
+#     { url = "https://intranet.example.internal/health", name = "Intranet" },
+# ]
 
 [dns]
 # Optional: DNS servers to query instead of the system resolver

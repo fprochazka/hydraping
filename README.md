@@ -156,6 +156,27 @@ Supported endpoint formats:
 - **Custom primary check**: `{ url = "example.com", primary_check_type = "tcp" }` → Choose which check to display (dns/icmp/tcp/udp/tls/http)
 - **Any certificate**: `{ url = "https://router.example.internal/", insecure = true }` → Skip certificate verification in the TLS layer (HTTPS only)
 
+### Chains
+
+Some targets are only reachable through others: the company intranet through a VPN jumpbox, and the jumpbox through the internet. A chain lists such hops in order, so the problems section can say where the path breaks instead of listing every target behind the break as failed:
+
+```toml
+[[chains]]
+name = "Company"
+hops = [
+    { url = "router", name = "Router" },
+    { url = "1.1.1.1", name = "Internet" },
+    { url = "jumpbox.example.ts.net:22", name = "Jumpbox" },
+    { url = "https://intranet.example.internal/health", name = "Intranet" },
+]
+```
+
+Hops take the same formats and keys as `targets`, and each hop is measured like a target. The dashboard shows the chain as a header row with its hops indented below it.
+
+The chain is broken at the first hop whose displayed check failed in the current graph column, or in the column just before it while the current one has no result yet. The problems section then shows one line for the chain, for example `Company: broken at Jumpbox (TCP: Connection refused on port 22); Router, Internet OK`. The hops after the broken one keep being probed, so a recovery shows up right away, but their own problem lines are left out, because they fail with the broken hop. The diagnosis stops at a hop that has no result yet, for example while its first probe is still running: the hops after it are not judged until it answers, so the chain's status stays empty unless a hop before it is broken.
+
+A hop that measures the same thing as a target, or as a hop of another chain, shares its probes and its history with it. Endpoints given on the command line replace both the targets and the chains.
+
 ## Troubleshooting
 
 ### ICMP permissions on Linux

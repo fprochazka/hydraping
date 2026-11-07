@@ -43,9 +43,25 @@ class EndpointSnapshot:
 
 
 @dataclass(frozen=True)
+class ChainSnapshot:
+    """A chain of dependent hops: a header row, with its hops below it."""
+
+    name: str
+    # Each hop as an endpoint row. Hops after the broken one have their problems suppressed.
+    hops: tuple[EndpointSnapshot, ...]
+    # Index of the first hop whose primary layer failed in the current bucket, or None.
+    broken_at: int | None
+    # The diagnosis line first, then the problems of the hops up to the broken one, each prefixed
+    # with the hop's name. Without the chain's name.
+    problems: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class EngineSnapshot:
     taken_at: float
     bucket_seconds: float
     columns: int
+    # The standalone targets, in config order.
     rows: tuple[EndpointSnapshot, ...]
     icmp_available: bool
+    chains: tuple[ChainSnapshot, ...] = ()

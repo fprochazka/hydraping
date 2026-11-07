@@ -113,10 +113,11 @@ def monitor(
         console.print(f"[red]Error loading configuration: {e}[/red]")
         raise typer.Exit(1) from None
 
-    # Override endpoints if provided as arguments
+    # Endpoints given as arguments replace the configured targets and chains.
     if endpoints:
         try:
             cfg.endpoints = [Endpoint.parse(ep) for ep in endpoints]
+            cfg.chains = []
         except Exception as e:
             console.print(f"[red]Error parsing endpoint: {e}[/red]")
             raise typer.Exit(1) from None

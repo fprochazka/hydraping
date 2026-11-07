@@ -8,9 +8,10 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
+from hydraping.core.config import Chain
 from hydraping.core.engine import Engine
 from hydraping.core.models import CheckType, Endpoint
-from hydraping.core.snapshot import EndpointSnapshot, EngineSnapshot
+from hydraping.core.snapshot import ChainSnapshot, EndpointSnapshot, EngineSnapshot
 from hydraping.tui.constants import get_latency_color
 from hydraping.tui.graph import LatencyGraph
 
@@ -36,16 +37,29 @@ class ColumnWidths:
     interface: int = 0
 
 
-def _endpoint_width_bounds(endpoints: list[Endpoint]) -> tuple[int, int]:
+# Hops are indented under their chain's header row.
+HOP_INDENT = "  "
+
+
+def row_names(endpoints: list[Endpoint], chains: list[Chain]) -> list[str]:
+    """Return the text of every name cell: targets, chain headers and indented hops."""
+    names = [endpoint.display_name for endpoint in endpoints]
+    for chain in chains:
+        names.append(chain.name)
+        names.extend(HOP_INDENT + hop.display_name for hop in chain.hops)
+    return names
+
+
+def _endpoint_width_bounds(names: list[str]) -> tuple[int, int]:
     """Return the (smallest, preferred) endpoint column width."""
-    longest_name = max((len(ep.display_name) for ep in endpoints), default=0)
+    longest_name = max((len(name) for name in names), default=0)
     preferred = min(longest_name + 2, MAX_ENDPOINT_WIDTH)
     return min(preferred, MIN_ENDPOINT_WIDTH), preferred
 
 
-def minimum_terminal_width(endpoints: list[Endpoint]) -> int:
+def minimum_terminal_width(names: list[str]) -> int:
     """Return the narrowest terminal that fits every column at its smallest width."""
-    smallest_endpoint, _ = _endpoint_width_bounds(endpoints)
+    smallest_endpoint, _ = _endpoint_width_bounds(names)
     return smallest_endpoint + FIXED_WIDTH + MIN_GRAPH_WIDTH
 
 
@@ -54,7 +68,7 @@ def interface_label(interface: str) -> str:
 
 
 def calculate_column_widths(
-    endpoints: list[Endpoint],
+    names: list[str],
     terminal_width: int,
     ui_graph_width: int = 0,
     interface_width: int = 0,
@@ -66,10 +80,10 @@ def calculate_column_widths(
     column, ``interface_width`` wide, is optional: it is dropped when it would shrink the graph
     below ``MIN_GRAPH_WIDTH``.
     """
-    if terminal_width < minimum_terminal_width(endpoints):
+    if terminal_width < minimum_terminal_width(names):
         return None
 
-    smallest_endpoint, preferred_endpoint = _endpoint_width_bounds(endpoints)
+    smallest_endpoint, preferred_endpoint = _endpoint_width_bounds(names)
     room_for_endpoint = terminal_width - FIXED_WIDTH - MIN_GRAPH_WIDTH
     endpoint_width = max(smallest_endpoint, min(preferred_endpoint, room_for_endpoint))
 
@@ -104,11 +118,12 @@ class Dashboard:
     def render(self) -> RenderableType:
         """Render the current state at the console's current width."""
         terminal_width = self.console.size.width
+        names = row_names(self.engine.endpoints, self.engine.config.chains)
         interface_width = max(
             (len(interface_label(name)) for name in self.engine.interfaces().values()), default=0
         )
         widths = calculate_column_widths(
-            self.engine.endpoints,
+            names,
             terminal_width,
             self.engine.config.ui.graph_width,
             interface_width,
@@ -116,7 +131,7 @@ class Dashboard:
         if widths is None:
             message = Text(
                 f"Terminal too narrow: {terminal_width} columns, needs "
-                f"{minimum_terminal_width(self.engine.endpoints)}",
+                f"{minimum_terminal_width(names)}",
                 style="yellow",
             )
             # Cut the message to one line, so a very narrow terminal still gets a single row.
@@ -135,6 +150,10 @@ class Dashboard:
 
         for row in snapshot.rows:
             self._add_endpoint_row(table, row, widths)
+        for index, chain in enumerate(snapshot.chains):
+            if snapshot.rows or index > 0:
+                table.add_row()  # An empty line before each chain.
+            self._add_chain_rows(table, chain, widths)
 
         problems = self._problems(snapshot)
         renderables: list[RenderableType] = [table]
@@ -146,7 +165,22 @@ class Dashboard:
 
         return Group(*renderables)
 
-    def _add_endpoint_row(self, table: Table, row: EndpointSnapshot, widths: ColumnWidths):
+    def _add_chain_rows(self, table: Table, chain: ChainSnapshot, widths: ColumnWidths):
+        if chain.broken_at is not None:
+            status = Text(f"broken at {chain.hops[chain.broken_at].endpoint.display_name}")
+            status.stylize("red")
+        elif chain.hops and all(hop.current is not None for hop in chain.hops):
+            status = Text("OK", style="green")
+        else:
+            status = Text("")
+        status.truncate(widths.graph, overflow="ellipsis")
+        table.add_row(Text(chain.name, style="bold underline"), status)
+        for hop in chain.hops:
+            self._add_endpoint_row(table, hop, widths, indent=HOP_INDENT)
+
+    def _add_endpoint_row(
+        self, table: Table, row: EndpointSnapshot, widths: ColumnWidths, indent: str = ""
+    ):
         current = row.current
         if current is not None and current.success and current.latency_ms is not None:
             check_label = current.check_type.value.upper()
@@ -171,7 +205,7 @@ class Dashboard:
         primary_layer = row.primary_layer()
         results = primary_layer.results() if primary_layer is not None else [None] * widths.graph
         cells = [
-            Text(row.endpoint.display_name, style="bold"),
+            Text(indent + row.endpoint.display_name, style="bold"),
             self.graph.render(results),
             Text(time_str, style=latency_style),
             Text(protocol_str, style="dim"),
@@ -190,6 +224,9 @@ class Dashboard:
         for row in snapshot.rows:
             for problem in row.problems:
                 problems.append(f"{row.endpoint.display_name}: {problem}")
+        for chain in snapshot.chains:
+            for problem in chain.problems:
+                problems.append(f"{chain.name}: {problem}")
         return problems
 
     def stop(self) -> None:
