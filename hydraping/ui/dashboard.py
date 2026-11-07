@@ -1,6 +1,10 @@
 """Main terminal UI dashboard for HydraPing."""
 
-from rich.console import Console, Group
+import asyncio
+import time
+from dataclasses import dataclass
+
+from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.table import Table
 from rich.text import Text
@@ -10,60 +14,72 @@ from hydraping.orchestrator import CheckOrchestrator
 from hydraping.ui.constants import get_latency_color
 from hydraping.ui.graph import LatencyGraph
 
+# Fixed columns: "999.9ms" fits in 8 characters, "(TCP:443)" in 10.
+LATENCY_TIME_WIDTH = 8
+PROTOCOL_WIDTH = 10
+# The endpoint column is the first to shrink in a narrow terminal. Names cut with "…" stay
+# readable down to MIN_ENDPOINT_WIDTH. A graph cut by Rich would hide the newest buckets instead.
+MAX_ENDPOINT_WIDTH = 30
+MIN_ENDPOINT_WIDTH = 10
+MIN_GRAPH_WIDTH = 20
 
-def calculate_graph_width(
+# padding=(0, 1) puts one space on each side of each of the 4 columns.
+TABLE_PADDING = 4 * 2
+FIXED_WIDTH = LATENCY_TIME_WIDTH + PROTOCOL_WIDTH + TABLE_PADDING
+
+
+@dataclass(frozen=True)
+class ColumnWidths:
+    endpoint: int
+    graph: int
+
+
+def _endpoint_width_bounds(endpoints: list[Endpoint]) -> tuple[int, int]:
+    """Return the (smallest, preferred) endpoint column width."""
+    longest_name = max((len(ep.display_name) for ep in endpoints), default=0)
+    preferred = min(longest_name + 2, MAX_ENDPOINT_WIDTH)
+    return min(preferred, MIN_ENDPOINT_WIDTH), preferred
+
+
+def minimum_terminal_width(endpoints: list[Endpoint]) -> int:
+    """Return the narrowest terminal that fits every column at its smallest width."""
+    smallest_endpoint, _ = _endpoint_width_bounds(endpoints)
+    return smallest_endpoint + FIXED_WIDTH + MIN_GRAPH_WIDTH
+
+
+def calculate_column_widths(
     endpoints: list[Endpoint], terminal_width: int, ui_graph_width: int = 0
-) -> int:
-    """Calculate graph width based on terminal size and configuration.
+) -> ColumnWidths | None:
+    """Return the column widths for one frame, or None if the terminal is too narrow.
 
-    Args:
-        endpoints: List of endpoints to display
-        terminal_width: Current terminal width in characters
-        ui_graph_width: Configured graph width (0 = auto-size)
-
-    Returns:
-        Calculated graph width in characters
-
-    Raises:
-        ValueError: If terminal is too narrow
+    The columns always add up to at most ``terminal_width``, so Rich never has to shrink the
+    graph. A configured ``ui_graph_width`` is capped at the space the terminal has.
     """
-    MIN_TERMINAL_WIDTH = 60
-    if terminal_width < MIN_TERMINAL_WIDTH:
-        raise ValueError(
-            f"Terminal too narrow ({terminal_width} chars). "
-            f"Minimum width required: {MIN_TERMINAL_WIDTH} chars"
-        )
+    if terminal_width < minimum_terminal_width(endpoints):
+        return None
 
-    # If graph width is explicitly configured, use it
-    if ui_graph_width > 0:
-        return ui_graph_width
+    smallest_endpoint, preferred_endpoint = _endpoint_width_bounds(endpoints)
+    room_for_endpoint = terminal_width - FIXED_WIDTH - MIN_GRAPH_WIDTH
+    endpoint_width = max(smallest_endpoint, min(preferred_endpoint, room_for_endpoint))
 
-    # Calculate auto-sized graph width
-    # Endpoint column: longest endpoint name + padding
-    endpoint_names = [ep.display_name for ep in endpoints]
-    endpoint_width = max(len(name) for name in endpoint_names) + 2
-    endpoint_width = min(endpoint_width, 30)  # Cap at reasonable max
+    available = terminal_width - FIXED_WIDTH - endpoint_width
+    graph_width = min(ui_graph_width, available) if ui_graph_width > 0 else available
 
-    # Latency time column: fixed width for "999.9ms" (8 chars)
-    latency_time_width = 8
-
-    # Protocol column: fixed width for "(TCP:443)" (10 chars)
-    protocol_width = 10
-
-    # Table padding: padding=(0, 1) means 1 space on each side of each cell
-    # With 4 columns: 4 columns * 2 sides * 1 space = 8 spaces total
-    table_padding = 8
-
-    # Graph column: remaining space
-    total_fixed = endpoint_width + latency_time_width + protocol_width + table_padding
-    graph_width = terminal_width - total_fixed
-
-    # Ensure minimum width
-    return max(graph_width, 20)
+    return ColumnWidths(endpoint=endpoint_width, graph=graph_width)
 
 
 class Dashboard:
-    """Live-updating terminal dashboard."""
+    """Live-updating terminal dashboard.
+
+    The dashboard keeps no width between frames. Every ``render()`` reads the console size, so the
+    layout follows terminal resizes.
+    """
+
+    # How often the loop checks the terminal size. A resize redraws at once.
+    RESIZE_POLL_SECONDS = 0.25
+    # How often the data redraws when the size stays the same. Each frame scans the whole history,
+    # which holds up to HISTORY_CAPACITY results per endpoint, so this stays at once per second.
+    REFRESH_SECONDS = 1.0
 
     def __init__(self, orchestrator: CheckOrchestrator, console: Console | None = None):
         """Initialize dashboard with orchestrator.
@@ -74,48 +90,34 @@ class Dashboard:
         """
         self.orchestrator = orchestrator
         self.console = console if console is not None else Console()
+        self.graph = LatencyGraph()
 
-        # Calculate column widths
-        self._calculate_column_widths()
-
-        # Create graph renderers for each endpoint
-        self.graphs: dict[str, LatencyGraph] = {}
-        for endpoint in orchestrator.endpoints:
-            self.graphs[endpoint.raw] = LatencyGraph(width=self.graph_width)
-
-    def _calculate_column_widths(self):
-        """Calculate fixed column widths based on terminal size."""
-        # Use the helper function to calculate graph width
-        self.graph_width = calculate_graph_width(
+    def render(self) -> RenderableType:
+        """Render the current state at the console's current width."""
+        terminal_width = self.console.size.width
+        widths = calculate_column_widths(
             self.orchestrator.endpoints,
-            self.console.width,
+            terminal_width,
             self.orchestrator.config.ui.graph_width,
         )
+        if widths is None:
+            message = Text(
+                f"Terminal too narrow: {terminal_width} columns, needs "
+                f"{minimum_terminal_width(self.orchestrator.endpoints)}",
+                style="yellow",
+            )
+            # Cut the message to one line, so a very narrow terminal still gets a single row.
+            message.truncate(terminal_width, overflow="ellipsis")
+            return message
 
-        # Endpoint column: longest endpoint name + padding
-        endpoint_names = [ep.display_name for ep in self.orchestrator.endpoints]
-        self.endpoint_width = max(len(name) for name in endpoint_names) + 2
-        self.endpoint_width = min(self.endpoint_width, 30)  # Cap at reasonable max
-
-        # Latency time column: fixed width for "999.9ms" (8 chars)
-        self.latency_time_width = 8
-
-        # Protocol column: fixed width for "(TCP:443)" (10 chars)
-        self.protocol_width = 10
-
-    def render(self) -> Group:
-        """Render the current state as a Rich group."""
         table = Table(show_header=False, box=None, padding=(0, 1))
+        table.add_column("Endpoint", width=widths.endpoint, no_wrap=True)
+        table.add_column("Graph", width=widths.graph, no_wrap=True)
+        table.add_column("Time", width=LATENCY_TIME_WIDTH, justify="right", no_wrap=True)
+        table.add_column("Protocol", width=PROTOCOL_WIDTH, justify="left", no_wrap=True)
 
-        # Add columns with fixed widths
-        table.add_column("Endpoint", width=self.endpoint_width, no_wrap=True)
-        table.add_column("Graph", width=self.graph_width, no_wrap=True)
-        table.add_column("Time", width=self.latency_time_width, justify="right", no_wrap=True)
-        table.add_column("Protocol", width=self.protocol_width, justify="left", no_wrap=True)
-
-        # Add rows for each endpoint
         for endpoint in self.orchestrator.endpoints:
-            self._add_endpoint_row(table, endpoint)
+            self._add_endpoint_row(table, endpoint, widths.graph)
 
         # Build problems section
         problems_text = self._render_problems()
@@ -129,7 +131,7 @@ class Dashboard:
 
         return Group(*renderables)
 
-    def _add_endpoint_row(self, table: Table, endpoint: Endpoint):
+    def _add_endpoint_row(self, table: Table, endpoint: Endpoint, graph_width: int):
         """Add a row for an endpoint to the table."""
         # Get result history for this endpoint
         history = self.orchestrator.get_history(endpoint)
@@ -139,10 +141,7 @@ class Dashboard:
             time_str = "N/A"
             protocol_str = ""
             latency_style = "dim"
-            graph_renderer = self.graphs[endpoint.raw]
-            # Render empty graph (all None)
-            bucketed_results = [None] * graph_renderer.width
-            graph_text = graph_renderer.render(bucketed_results)
+            graph_text = self.graph.render([None] * graph_width)
         else:
             # Get the current result (what should be displayed now)
             # This is synchronized with what the graph shows
@@ -172,9 +171,8 @@ class Dashboard:
 
             # Get bucketed results and render the graph
             # History prepares the ready-to-render list, graph just renders it
-            graph_renderer = self.graphs[endpoint.raw]
-            bucketed_results = history.get_bucketed_results(graph_renderer.width)
-            graph_text = graph_renderer.render(bucketed_results)
+            bucketed_results = history.get_bucketed_results(graph_width)
+            graph_text = self.graph.render(bucketed_results)
 
         # Add row
         table.add_row(
@@ -203,32 +201,30 @@ class Dashboard:
         return problems
 
     async def run(self):
-        """Run the live dashboard."""
-        # Set up live display with automatic refresh
-        # We update the display in the main loop to avoid race conditions
-        # from concurrent check results updating simultaneously
-        live = Live(
-            self.render(),
-            console=self.console,
-            refresh_per_second=4,
-            screen=False,
-        )
+        """Run the live dashboard on the alternate screen until cancelled.
 
-        # Start orchestrator and live display
+        The alternate screen gets cleared on every frame, so a resize leaves no stale lines. On
+        exit, including Ctrl+C, the last frame goes to normal output and stays in scrollback.
+        """
+        # The loop redraws in the event loop thread rather than through Live's refresh thread,
+        # because check results mutate the history in this thread.
+        live = Live(self.render(), console=self.console, auto_refresh=False, screen=True)
         live.start()
-        await self.orchestrator.start()
-
-        # Keep running and update display periodically
         try:
-            import asyncio
-
+            await self.orchestrator.start()
+            last_size = self.console.size
+            last_refresh = time.monotonic()
             while True:
-                # Update the display with fresh data
-                live.update(self.render())
-                await asyncio.sleep(1.0)  # Update once per second
-        except KeyboardInterrupt:
-            # Suppress KeyboardInterrupt output
-            pass
+                await asyncio.sleep(self.RESIZE_POLL_SECONDS)
+                size = self.console.size
+                now = time.monotonic()
+                if size != last_size or now - last_refresh >= self.REFRESH_SECONDS:
+                    live.update(self.render(), refresh=True)
+                    last_size = size
+                    last_refresh = now
         finally:
-            await self.orchestrator.stop()
-            live.stop()
+            try:
+                await self.orchestrator.stop()
+            finally:
+                live.stop()
+                self.console.print(self.render())

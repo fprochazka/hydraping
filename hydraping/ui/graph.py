@@ -21,12 +21,11 @@ class LatencyGraph:
     # Latency thresholds for height calculation (in ms)
     MAX_LATENCY_FOR_GRAPH = 500.0  # Anything above this is max height
 
-    def __init__(self, width: int):
-        """Initialize graph with fixed width."""
-        self.width = width
-
     def render(self, bucketed_results: list[CheckResult | None]) -> Text:
-        """Render graph from pre-bucketed check results.
+        """Render graph from pre-bucketed check results, one character per bucket.
+
+        The graph stores no width. The caller sizes the list to the current terminal on every
+        frame, so the graph follows resizes.
 
         The bucketing, time range calculation, and priority selection are all
         done by EndpointResultHistory. This method is a pure renderer - it just
