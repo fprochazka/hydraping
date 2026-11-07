@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from hydraping.core.chains import HopState, current_result, diagnose_chain
 from hydraping.core.checkers.connection import ConnectionChecker, ConnectionTarget, HTTPRequest
+from hydraping.core.checkers.dns import DNSChecker
 from hydraping.core.checkers.icmp import ICMPChecker
 from hydraping.core.checkers.udp import UDPChecker
 from hydraping.core.config import Chain, Config
@@ -18,6 +19,7 @@ from hydraping.core.models import (
     CHECK_TYPE_PRIORITY,
     CheckResult,
     CheckType,
+    DNSServerEndpoint,
     DomainEndpoint,
     Endpoint,
     HTTPEndpoint,
@@ -156,6 +158,7 @@ class Engine:
 
         self.icmp_checker = ICMPChecker(timeout=checks.timeout_seconds)
         self.udp_checker = UDPChecker(timeout=checks.timeout_seconds)
+        self.dns_checker = DNSChecker(timeout=checks.timeout_seconds)
         # getaddrinfo blocks a thread and cannot be interrupted. On its own executor, stop() can
         # drop it without waiting; on the loop's default executor, asyncio.run() would wait for a
         # hanging system resolver before returning.
@@ -226,6 +229,9 @@ class Engine:
                     self._udp_probe(endpoint.ip, endpoint.port, endpoint.probe_data),
                 )
             )
+        elif isinstance(endpoint, DNSServerEndpoint):
+            schedules.append(schedule(icmp, self._icmp_probe(endpoint.ip)))
+            schedules.append(schedule([CheckType.DNS], self._dns_server_probe(endpoint)))
         elif isinstance(endpoint, DomainEndpoint):
             schedules.append(schedule(icmp, self._icmp_probe(endpoint.domain, endpoint.ip_version)))
             # Without a port, the chains for 80 and 443 share the DNS layer (last result wins) and
@@ -297,7 +303,7 @@ class Engine:
         return self.connection_checker.get_last_resolved_ip(host, ip_version)
 
     def _endpoint_address(self, endpoint: Endpoint) -> str | None:
-        if isinstance(endpoint, (IPEndpoint, IPPortEndpoint, UDPPortEndpoint)):
+        if isinstance(endpoint, (IPEndpoint, IPPortEndpoint, UDPPortEndpoint, DNSServerEndpoint)):
             return endpoint.ip
         if isinstance(endpoint, DomainEndpoint):
             return self._resolved_address(endpoint.domain, endpoint.ip_version)
@@ -335,6 +341,15 @@ class Engine:
     def _connection_probe(self, target: ConnectionTarget) -> Probe:
         async def probe() -> Sequence[Measurement]:
             return await self.connection_checker.check(target)
+
+        return probe
+
+    def _dns_server_probe(self, endpoint: DNSServerEndpoint) -> Probe:
+        async def probe() -> Sequence[Measurement]:
+            measurement = await self.dns_checker.check_server(
+                endpoint.ip, endpoint.zone, port=endpoint.port, transport=endpoint.transport
+            )
+            return [measurement]
 
         return probe
 

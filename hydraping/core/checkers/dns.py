@@ -1,15 +1,29 @@
 """DNS resolver checker."""
 
+import secrets
+import string
 import time
 from collections.abc import Sequence
 
+import dns.asyncquery
 import dns.asyncresolver
 import dns.exception
+import dns.message
+import dns.name
+import dns.rcode
 import dns.resolver
 from dns.nameserver import Nameserver
 
 from hydraping.core.checkers.base import BaseChecker
 from hydraping.core.models import CheckType, Measurement
+
+_RANDOM_LABEL_CHARS = string.ascii_lowercase
+
+
+def random_query_name(zone: str) -> str:
+    """Return ``hp-<8 random lowercase letters>.<zone>``, a name no resolver has cached."""
+    label = "".join(secrets.choice(_RANDOM_LABEL_CHARS) for _ in range(8))
+    return f"hp-{label}.{zone.strip('.')}."
 
 
 class DNSChecker(BaseChecker):
@@ -136,3 +150,41 @@ class DNSChecker(BaseChecker):
                 success=False,
                 error_message=f"DNS error: {e}",
             )
+
+    async def check_server(
+        self, server: str, zone: str, port: int = 53, transport: str = "udp"
+    ) -> Measurement:
+        """Ask ``server`` for the A record of a random name under ``zone``, over UDP or TCP.
+
+        An answer and NXDOMAIN are both a success: the server answered from the full resolver
+        path. A timeout, SERVFAIL, REFUSED or any other error code is a failure.
+        """
+        query = dns.message.make_query(random_query_name(zone), "A")
+        send = dns.asyncquery.tcp if transport == "tcp" else dns.asyncquery.udp
+        start = time.perf_counter()
+        try:
+            response = await send(query, server, timeout=self.timeout, port=port)
+        except dns.exception.Timeout:
+            return self._create_result(
+                check_type=CheckType.DNS,
+                success=False,
+                error_message=f"No answer from {server} within {self.timeout:g}s",
+            )
+        except (OSError, EOFError, dns.exception.DNSException) as e:
+            return self._create_result(
+                check_type=CheckType.DNS,
+                success=False,
+                error_message=f"DNS query to {server} failed: {str(e) or type(e).__name__}",
+            )
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        rcode = response.rcode()
+        if rcode in (dns.rcode.NOERROR, dns.rcode.NXDOMAIN):
+            return self._create_result(
+                check_type=CheckType.DNS, success=True, latency_ms=latency_ms
+            )
+        return self._create_result(
+            check_type=CheckType.DNS,
+            success=False,
+            error_message=f"{dns.rcode.to_text(rcode)} from {server}",
+        )

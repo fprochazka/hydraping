@@ -155,6 +155,7 @@ Supported endpoint formats:
 - **IPv4/IPv6 preference**: `{ url = "google.com", ip_version = 4 }` → Force IPv4 or IPv6
 - **Custom primary check**: `{ url = "example.com", primary_check_type = "tcp" }` → Choose which check to display (dns/icmp/tcp/udp/tls/http)
 - **Any certificate**: `{ url = "https://router.example.internal/", insecure = true }` → Skip certificate verification in the TLS layer (HTTPS only)
+- **DNS resolver**: `{ url = "192.0.2.53", check = "dns", query = "example.com" }` → ICMP + a query for a random name under the zone; see [DNS resolver hops](#dns-resolver-hops)
 
 ### Chains
 
@@ -176,6 +177,22 @@ Hops take the same formats and keys as `targets`, and each hop is measured like 
 The chain is broken at the first hop whose displayed check failed in the current graph column, or in the column just before it while the current one has no result yet. The problems section then shows one line for the chain, for example `Company: broken at Jumpbox (TCP: Connection refused on port 22); Router, Internet OK`. The hops after the broken one keep being probed, so a recovery shows up right away, but their own problem lines are left out, because they fail with the broken hop. The diagnosis stops at a hop that has no result yet, for example while its first probe is still running: the hops after it are not judged until it answers, so the chain's status stays empty unless a hop before it is broken.
 
 A hop that measures the same thing as a target, or as a hop of another chain, shares its probes and its history with it. Endpoints given on the command line replace both the targets and the chains.
+
+### DNS resolver hops
+
+`check = "dns"` measures a DNS server instead of a host. `url` is the server's IP address, optionally with a port, and `query` is a zone the server can resolve:
+
+```toml
+[endpoints]
+targets = [
+    { url = "192.0.2.53", check = "dns", query = "example.internal", name = "Company DNS" },
+    { url = "198.51.100.53:5353", check = "dns", query = "example.com", transport = "tcp" },
+]
+```
+
+Each probe asks the server for the A record of a new random name, `hp-<8 random letters>.<zone>`. No cache on the way can hold that name, so the latency covers the whole resolver path: the server, its forwarders, and the authoritative servers of the zone. Any answer counts as success, including NXDOMAIN, because the server did resolve the question. A timeout, SERVFAIL, REFUSED or any other error code is a failure. Queries go over UDP, or over TCP with `transport = "tcp"`.
+
+The server's address is also pinged, so the row has ICMP and DNS layers, and DNS is the one graphed. The keys `protocol`, `ip_version`, `insecure`, `probe_hex` and `probe_ascii` don't apply to a DNS hop and are rejected. It works in `targets` and as a chain hop.
 
 ## Troubleshooting
 

@@ -10,10 +10,19 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+import dns.exception
+import dns.name
 import tomlkit
 import tomlkit.items
 
-from hydraping.core.models import CheckType, Endpoint
+from hydraping.core.checkers.dns import random_query_name
+from hydraping.core.models import (
+    CheckType,
+    DNSServerEndpoint,
+    Endpoint,
+    IPEndpoint,
+    IPPortEndpoint,
+)
 
 # The format this release reads. A file without ``version`` is the v1 format and gets migrated.
 CONFIG_VERSION = 2
@@ -148,6 +157,46 @@ class Config:
         return Config(endpoints=endpoints, dns=dns, checks=checks, ui=ui, chains=chains)
 
 
+# Endpoint keys that only an ordinary endpoint understands, not one with a ``check`` type.
+_ORDINARY_ONLY_KEYS = ("protocol", "ip_version", "probe_hex", "probe_ascii", "insecure")
+
+
+def _parse_check_endpoint(ep_config: dict, url: str) -> Endpoint:
+    """Parse an endpoint with a ``check`` key, which selects a special measurement."""
+    check = ep_config["check"]
+    if check != "dns":
+        raise ValueError(f'Unknown check {check!r} on {url}; the supported check is "dns"')
+    for key in _ORDINARY_ONLY_KEYS:
+        if key in ep_config:
+            raise ValueError(f"'{key}' cannot be combined with check = {check!r} on {url}")
+
+    zone = ep_config.get("query")
+    if not isinstance(zone, str) or not zone.strip(". "):
+        raise ValueError(
+            f"check = \"dns\" on {url} needs 'query', the zone to ask for random names in, "
+            'for example query = "example.com"'
+        )
+    try:
+        dns.name.from_text(random_query_name(zone))
+    except dns.exception.DNSException as e:
+        raise ValueError(f"Invalid query zone {zone!r} on {url}: {e}") from e
+    transport = ep_config.get("transport", "udp")
+    if transport not in ("udp", "tcp"):
+        raise ValueError(f'transport must be "udp" or "tcp" on {url}, got: {transport!r}')
+
+    parsed = Endpoint.parse(url)
+    if isinstance(parsed, IPEndpoint):
+        port = 53
+    elif isinstance(parsed, IPPortEndpoint):
+        port = parsed.port
+    else:
+        raise ValueError(
+            f'check = "dns" needs the DNS server\'s IP address as url, optionally with a port, '
+            f"got: {url}"
+        )
+    return DNSServerEndpoint(raw=url, ip=parsed.ip, port=port, zone=zone, transport=transport)
+
+
 def _parse_endpoint(ep_config: object) -> Endpoint:
     """Parse one entry of ``endpoints.targets`` or of a chain's ``hops``."""
     if isinstance(ep_config, str):
@@ -161,7 +210,11 @@ def _parse_endpoint(ep_config: object) -> Endpoint:
 
         # Check if this is a UDP endpoint (protocol field)
         protocol = ep_config.get("protocol", "tcp").lower()
-        if protocol == "udp":
+        if "check" in ep_config:
+            endpoint = _parse_check_endpoint(ep_config, url)
+        elif "query" in ep_config or "transport" in ep_config:
+            raise ValueError(f"'query' and 'transport' need check = \"dns\" on {url}")
+        elif protocol == "udp":
             # Parse as UDP endpoint
             # URL format should be "ip:port" for UDP
             from hydraping.core.models import (
@@ -292,6 +345,9 @@ _KNOWN_ENDPOINT_KEYS = {
     "insecure",
     "probe_hex",
     "probe_ascii",
+    "check",
+    "query",
+    "transport",
 }
 
 
@@ -444,6 +500,8 @@ version = 2
 #   - IPv4/IPv6 preference: { url = "google.com", ip_version = 4, name = "Google (IPv4)" }
 #   - Primary check type: { url = "example.com", primary_check_type = "tcp" }
 #   - Accept any certificate: { url = "https://router.example.internal/", insecure = true }
+#   - DNS resolver path: { url = "192.0.2.53", check = "dns", query = "example.com" }
+#     asks the server for a random, uncacheable name under the zone on every probe
 #
 # Endpoint types:
 #   - IPv4 address: "8.8.8.8"

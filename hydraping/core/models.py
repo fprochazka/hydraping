@@ -60,6 +60,7 @@ class EndpointType(str, Enum):
     UDP_PORT = "udp_port"
     DOMAIN = "domain"
     HTTP = "http"
+    DNS_SERVER = "dns_server"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -324,6 +325,30 @@ class UDPPortEndpoint(Endpoint):
     def get_primary_check_type(self) -> CheckType:
         """Return the primary check type to display in graph/latency."""
         return self.primary_check_type if self.primary_check_type else CheckType.UDP
+
+
+@dataclass
+class DNSServerEndpoint(Endpoint):
+    """A DNS server measured with uncacheable queries - ICMP + DNS checks.
+
+    Each probe asks the server for an A record of a random name under ``zone``. No resolver on the
+    way can have the name cached, so the answer measures the whole resolver path. ``check = "dns"``
+    in the config makes an endpoint of this type.
+    """
+
+    ip: str
+    zone: str
+    port: int = 53
+    transport: str = "udp"  # "udp" or "tcp"
+
+    def __post_init__(self):
+        self.endpoint_type = EndpointType.DNS_SERVER
+
+    def get_check_types(self) -> list[CheckType]:
+        return [CheckType.ICMP, CheckType.DNS]
+
+    def get_primary_check_type(self) -> CheckType:
+        return self.primary_check_type if self.primary_check_type else CheckType.DNS
 
 
 @dataclass
