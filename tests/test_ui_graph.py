@@ -8,11 +8,11 @@ import pytest
 from rich.cells import cell_len
 from rich.console import Console
 
-from hydraping.config import Config
-from hydraping.models import CheckResult, CheckType, Endpoint
-from hydraping.orchestrator import CheckOrchestrator
-from hydraping.ui.dashboard import Dashboard
-from hydraping.ui.graph import LatencyGraph
+from hydraping.core.config import Config
+from hydraping.core.models import CheckResult, CheckType, Endpoint
+from hydraping.core.orchestrator import CheckOrchestrator
+from hydraping.tui.dashboard import Dashboard
+from hydraping.tui.graph import LatencyGraph
 
 
 class TestLatencyGraph:

@@ -5,7 +5,7 @@ from datetime import datetime
 
 import pytest
 
-from hydraping.models import (
+from hydraping.core.models import (
     CHECK_TYPE_PRIORITY,
     CheckResult,
     CheckType,

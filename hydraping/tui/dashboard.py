@@ -9,10 +9,10 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
-from hydraping.models import CheckType, Endpoint
-from hydraping.orchestrator import CheckOrchestrator
-from hydraping.ui.constants import get_latency_color
-from hydraping.ui.graph import LatencyGraph
+from hydraping.core.models import CheckType, Endpoint
+from hydraping.core.orchestrator import CheckOrchestrator
+from hydraping.tui.constants import get_latency_color
+from hydraping.tui.graph import LatencyGraph
 
 # Fixed columns: "999.9ms" fits in 8 characters, "(TCP:443)" in 10.
 LATENCY_TIME_WIDTH = 8

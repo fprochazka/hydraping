@@ -4,8 +4,8 @@ from datetime import datetime
 
 import icmplib
 
-from hydraping.checkers.base import BaseChecker
-from hydraping.models import CheckResult, CheckType
+from hydraping.core.checkers.base import BaseChecker
+from hydraping.core.models import CheckResult, CheckType
 
 
 class ICMPChecker(BaseChecker):

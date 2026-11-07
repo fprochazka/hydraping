@@ -4,7 +4,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from hydraping.models import CheckType, Endpoint
+from hydraping.core.models import CheckType, Endpoint
 
 
 @dataclass
@@ -75,7 +75,11 @@ class Config:
                 if protocol == "udp":
                     # Parse as UDP endpoint
                     # URL format should be "ip:port" for UDP
-                    from hydraping.models import UDPPortEndpoint, _is_ip_address, _validate_port
+                    from hydraping.core.models import (
+                        UDPPortEndpoint,
+                        _is_ip_address,
+                        _validate_port,
+                    )
 
                     # Parse IP:port
                     if ":" in url:

@@ -4,13 +4,13 @@ import asyncio
 import time
 from datetime import datetime
 
-from hydraping.checkers.dns import DNSChecker
-from hydraping.checkers.http import HTTPChecker
-from hydraping.checkers.icmp import ICMPChecker
-from hydraping.checkers.tcp import TCPChecker
-from hydraping.checkers.udp import UDPChecker
-from hydraping.config import Config
-from hydraping.models import (
+from hydraping.core.checkers.dns import DNSChecker
+from hydraping.core.checkers.http import HTTPChecker
+from hydraping.core.checkers.icmp import ICMPChecker
+from hydraping.core.checkers.tcp import TCPChecker
+from hydraping.core.checkers.udp import UDPChecker
+from hydraping.core.config import Config
+from hydraping.core.models import (
     CHECK_TYPE_PRIORITY,
     CheckResult,
     CheckType,
@@ -199,7 +199,7 @@ class CheckOrchestrator:
         """
         try:
             # Only query DNS checker for resolved IP if target is not already an IP
-            from hydraping.models import _is_ip_address
+            from hydraping.core.models import _is_ip_address
 
             icmp_target = target
             if not _is_ip_address(target):

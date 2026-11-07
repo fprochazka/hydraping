@@ -2,14 +2,14 @@
 
 import pytest
 
-from hydraping.config import (
+from hydraping.core.config import (
     ChecksConfig,
     Config,
     DNSConfig,
     UIConfig,
     create_default_config,
 )
-from hydraping.models import (
+from hydraping.core.models import (
     DomainEndpoint,
     HTTPEndpoint,
     IPEndpoint,

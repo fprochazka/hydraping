@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from hydraping.models import CheckResult, CheckType
+from hydraping.core.models import CheckResult, CheckType
 
 
 class BaseChecker(ABC):

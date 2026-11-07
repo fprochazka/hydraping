@@ -2,8 +2,8 @@
 
 from rich.text import Text
 
-from hydraping.models import CheckResult
-from hydraping.ui.constants import (
+from hydraping.core.models import CheckResult
+from hydraping.tui.constants import (
     LATENCY_GREEN_MAX,
     LATENCY_ORANGE_MAX,
     LATENCY_YELLOW_MAX,
@@ -116,7 +116,7 @@ class LatencyGraph:
         """
         Get bar character and color for a given latency.
 
-        Uses constants from ui.constants for consistent color thresholds.
+        Uses constants from tui.constants for consistent color thresholds.
 
         Returns:
             Tuple of (bar_character, color_name)
