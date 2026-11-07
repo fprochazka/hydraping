@@ -54,6 +54,8 @@ class Config:
         with config_path.open("rb") as f:
             data = tomllib.load(f)
 
+        _reject_unknown_keys(data, config_path)
+
         # Parse endpoints
         endpoint_configs = data.get("endpoints", {}).get("targets", [])
         if not endpoint_configs:
@@ -205,6 +207,56 @@ class Config:
         ui = UIConfig(graph_width=ui_data.get("graph_width", 0))
 
         return Config(endpoints=endpoints, dns=dns, checks=checks, ui=ui)
+
+
+# Every key settings.toml may contain, per table. An unknown key is an error: a silently ignored
+# typo (for example "intervl_seconds") would leave the default in effect without any hint.
+_KNOWN_TABLE_KEYS: dict[str, set[str]] = {
+    "endpoints": {"targets"},
+    "dns": {"custom_servers"},
+    "checks": {"interval_seconds", "timeout_seconds", "http_success_status_max"},
+    "ui": {"graph_width"},
+}
+_KNOWN_ENDPOINT_KEYS = {
+    "url",
+    "name",
+    "protocol",
+    "ip_version",
+    "primary_check_type",
+    "probe_hex",
+    "probe_ascii",
+}
+
+
+def _reject_unknown_keys(data: dict, config_path: Path) -> None:
+    """Raise ValueError naming the first key that settings.toml does not support."""
+
+    def unknown(key_path: str) -> ValueError:
+        return ValueError(f"Unknown key '{key_path}' in {config_path}")
+
+    for table_name, table in data.items():
+        if table_name not in _KNOWN_TABLE_KEYS:
+            raise unknown(table_name)
+        if not isinstance(table, dict):
+            raise ValueError(f"'{table_name}' must be a table in {config_path}")
+        for key in table:
+            if key not in _KNOWN_TABLE_KEYS[table_name]:
+                raise unknown(f"{table_name}.{key}")
+
+    targets = data.get("endpoints", {}).get("targets", [])
+    if not isinstance(targets, list):
+        # A string would otherwise be iterated as one endpoint per character.
+        raise ValueError(f"'endpoints.targets' must be a list in {config_path}")
+    for index, target in enumerate(targets):
+        if isinstance(target, str):
+            continue
+        if not isinstance(target, dict):
+            raise ValueError(
+                f"'endpoints.targets[{index}]' must be a string or a table in {config_path}"
+            )
+        for key in target:
+            if key not in _KNOWN_ENDPOINT_KEYS:
+                raise unknown(f"endpoints.targets[{index}].{key}")
 
 
 def get_default_config_path() -> Path:

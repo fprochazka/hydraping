@@ -176,6 +176,67 @@ targets = [
             Config.load(config_file)
 
 
+class TestUnknownKeys:
+    """Test that keys settings.toml does not support stop loading with the key path."""
+
+    def _write(self, tmp_path, body: str):
+        config_file = tmp_path / "settings.toml"
+        config_file.write_text('[endpoints]\ntargets = ["192.0.2.1"]\n' + body)
+        return config_file
+
+    def test_unknown_top_level_table(self, tmp_path):
+        config_file = self._write(tmp_path, "\n[graphs]\nwidth = 3\n")
+        with pytest.raises(ValueError) as error:
+            Config.load(config_file)
+        assert str(error.value) == f"Unknown key 'graphs' in {config_file}"
+
+    def test_unknown_key_in_checks(self, tmp_path):
+        config_file = self._write(tmp_path, "\n[checks]\nintervl_seconds = 1.0\n")
+        with pytest.raises(ValueError) as error:
+            Config.load(config_file)
+        assert str(error.value) == f"Unknown key 'checks.intervl_seconds' in {config_file}"
+
+    def test_unknown_key_in_endpoint_object(self, tmp_path):
+        config_file = tmp_path / "settings.toml"
+        config_file.write_text("""
+[endpoints]
+targets = [
+    "192.0.2.1",
+    { url = "example.com", nmae = "Example" },
+]
+""")
+        with pytest.raises(ValueError) as error:
+            Config.load(config_file)
+        assert str(error.value) == f"Unknown key 'endpoints.targets[1].nmae' in {config_file}"
+
+
+class TestConfigShape:
+    """Test that values of the wrong kind stop loading with the key path."""
+
+    def test_table_that_is_not_a_table(self, tmp_path):
+        config_file = tmp_path / "settings.toml"
+        config_file.write_text('checks = 5\n[endpoints]\ntargets = ["192.0.2.1"]\n')
+        with pytest.raises(ValueError) as error:
+            Config.load(config_file)
+        assert str(error.value) == f"'checks' must be a table in {config_file}"
+
+    def test_targets_that_is_not_a_list(self, tmp_path):
+        config_file = tmp_path / "settings.toml"
+        config_file.write_text('[endpoints]\ntargets = "192.0.2.1"\n')
+        with pytest.raises(ValueError) as error:
+            Config.load(config_file)
+        assert str(error.value) == f"'endpoints.targets' must be a list in {config_file}"
+
+    def test_target_that_is_neither_string_nor_table(self, tmp_path):
+        config_file = tmp_path / "settings.toml"
+        config_file.write_text('[endpoints]\ntargets = ["192.0.2.1", 53]\n')
+        with pytest.raises(ValueError) as error:
+            Config.load(config_file)
+        assert str(error.value) == (
+            f"'endpoints.targets[1]' must be a string or a table in {config_file}"
+        )
+
+
 class TestConfigClasses:
     """Test configuration dataclasses."""
 
