@@ -2,16 +2,15 @@
 
 import asyncio
 import time
-from datetime import datetime
 
 from hydraping.core.checkers.base import BaseChecker
-from hydraping.core.models import CheckResult, CheckType
+from hydraping.core.models import CheckType, Measurement
 
 
 class TCPChecker(BaseChecker):
     """Checker for TCP port connectivity."""
 
-    async def check(self, host: str, port: int, iteration_timestamp: datetime) -> CheckResult:
+    async def check(self, host: str, port: int) -> Measurement:
         """Perform TCP connection check."""
         writer = None
         try:
@@ -29,7 +28,6 @@ class TCPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.TCP,
                 success=True,
-                timestamp=iteration_timestamp,
                 latency_ms=latency_ms,
                 port=port,
             )
@@ -38,7 +36,6 @@ class TCPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.TCP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"Connection timeout (>{self.timeout}s)",
                 port=port,
             )
@@ -46,7 +43,6 @@ class TCPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.TCP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"Connection refused on port {port}",
                 port=port,
             )
@@ -54,7 +50,6 @@ class TCPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.TCP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"Network error: {e}",
                 port=port,
             )
@@ -62,7 +57,6 @@ class TCPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.TCP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"TCP error: {e}",
                 port=port,
             )

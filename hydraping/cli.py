@@ -1,6 +1,5 @@
 """CLI interface for HydraPing."""
 
-import asyncio
 from importlib.metadata import version as get_version
 from pathlib import Path
 from typing import Annotated
@@ -10,8 +9,8 @@ from rich.console import Console
 from typer.core import TyperGroup
 
 from hydraping.core.config import Config, create_default_config, get_default_config_path
+from hydraping.core.engine import Engine
 from hydraping.core.models import Endpoint
-from hydraping.core.orchestrator import CheckOrchestrator
 from hydraping.tui.dashboard import Dashboard
 
 DEFAULT_COMMAND = "monitor"
@@ -73,10 +72,9 @@ console = Console()
 
 def start_monitoring(cfg: Config) -> None:
     """Run the live dashboard for ``cfg`` until Ctrl+C. Tests replace this to skip monitoring."""
-    orchestrator = CheckOrchestrator(cfg)
-    dashboard = Dashboard(orchestrator, console=console)
+    dashboard = Dashboard(Engine(cfg), console=console)
     try:
-        asyncio.run(dashboard.run())
+        dashboard.run()
     except KeyboardInterrupt:
         console.print("\n[yellow]Stopped by user[/yellow]")
 

@@ -1,12 +1,11 @@
 """HTTP/HTTPS request checker."""
 
 import time
-from datetime import datetime
 
 import aiohttp
 
 from hydraping.core.checkers.base import BaseChecker
-from hydraping.core.models import CheckResult, CheckType
+from hydraping.core.models import CheckType, Measurement
 
 
 class HTTPChecker(BaseChecker):
@@ -23,7 +22,7 @@ class HTTPChecker(BaseChecker):
         super().__init__(timeout)
         self.success_status_max = success_status_max
 
-    async def check(self, url: str, iteration_timestamp: datetime) -> CheckResult:
+    async def check(self, url: str) -> Measurement:
         """Perform HTTP request check."""
         # Determine protocol from URL
         protocol = "https" if url.startswith("https://") else "http"
@@ -46,7 +45,6 @@ class HTTPChecker(BaseChecker):
                         return self._create_result(
                             check_type=CheckType.HTTP,
                             success=True,
-                            timestamp=iteration_timestamp,
                             latency_ms=latency_ms,
                             protocol=protocol,
                         )
@@ -54,7 +52,6 @@ class HTTPChecker(BaseChecker):
                         return self._create_result(
                             check_type=CheckType.HTTP,
                             success=False,
-                            timestamp=iteration_timestamp,
                             error_message=f"HTTP {response.status} {response.reason}",
                             protocol=protocol,
                         )
@@ -63,7 +60,6 @@ class HTTPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.HTTP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"Connection failed: {e}",
                 protocol=protocol,
             )
@@ -71,7 +67,6 @@ class HTTPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.HTTP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"Request timeout (>{self.timeout}s)",
                 protocol=protocol,
             )
@@ -79,7 +74,6 @@ class HTTPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.HTTP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"HTTP client error: {e}",
                 protocol=protocol,
             )
@@ -87,7 +81,6 @@ class HTTPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.HTTP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"HTTP error: {e}",
                 protocol=protocol,
             )

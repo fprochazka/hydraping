@@ -38,6 +38,7 @@ dependencies = [
     "aiohttp>=3.13.2,<4",
     "rich>=14.2.0,<15",
     "typer>=0.20.0,<0.21",
+    "tomlkit>=0.15.2,<0.16",
 ]
 
 [project.urls]

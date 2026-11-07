@@ -1,11 +1,9 @@
 """ICMP ping checker."""
 
-from datetime import datetime
-
 import icmplib
 
 from hydraping.core.checkers.base import BaseChecker
-from hydraping.core.models import CheckResult, CheckType
+from hydraping.core.models import CheckType, Measurement
 
 
 class ICMPChecker(BaseChecker):
@@ -24,14 +22,13 @@ class ICMPChecker(BaseChecker):
         """
         return not self._permission_denied
 
-    async def check(self, target: str, iteration_timestamp: datetime) -> CheckResult:
+    async def check(self, target: str) -> Measurement:
         """Perform ICMP ping check."""
         # If we've already detected permission issues, skip silently
         if self._permission_denied:
             return self._create_result(
                 check_type=CheckType.ICMP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message="ICMP unavailable (insufficient permissions)",
             )
 
@@ -48,14 +45,12 @@ class ICMPChecker(BaseChecker):
                 return self._create_result(
                     check_type=CheckType.ICMP,
                     success=True,
-                    timestamp=iteration_timestamp,
                     latency_ms=latency_ms,
                 )
             else:
                 return self._create_result(
                     check_type=CheckType.ICMP,
                     success=False,
-                    timestamp=iteration_timestamp,
                     error_message=f"Host unreachable (packet loss: {host.packet_loss})",
                 )
 
@@ -63,7 +58,6 @@ class ICMPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.ICMP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"Name lookup failed: {e}",
             )
         except (icmplib.SocketPermissionError, PermissionError, OSError) as e:
@@ -72,13 +66,11 @@ class ICMPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.ICMP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"ICMP unavailable (insufficient permissions): {e}",
             )
         except Exception as e:
             return self._create_result(
                 check_type=CheckType.ICMP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"ICMP error: {e}",
             )

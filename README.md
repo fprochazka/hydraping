@@ -79,6 +79,8 @@ Graph colors: 🟢 Green (<50ms) · 🟡 Yellow (50-100ms) · 🟠 Orange (100-2
 Example `~/.config/hydraping/settings.toml`:
 
 ```toml
+version = 2
+
 [endpoints]
 targets = [
     # Simple string format (uses URL as display name)
@@ -105,15 +107,32 @@ targets = [
 ]
 
 [dns]
-custom_servers = []  # Optional: custom DNS servers
+servers = []  # Optional: DNS servers to query instead of the system resolver
 
 [checks]
-interval_seconds = 5.0  # Check every 5 seconds
-timeout_seconds = 5.0   # 5 second timeout per check
+probe_interval_seconds = 1.0  # A new probe starts every second
+bucket_seconds = 5.0          # One graph column covers 5 seconds
+timeout_seconds = 5.0         # A probe that takes longer counts as failed
 
 [ui]
 graph_width = 0  # Auto-size to terminal width
 ```
+
+Unknown keys stop the start with an error that names the key, so a typo cannot silently fall back to a default.
+
+### Probe timing
+
+A new probe starts for every check every `probe_interval_seconds`, whether or not the previous one has answered. Each probe gives up after `timeout_seconds`. The graph groups results into columns of `bucket_seconds`; the rightmost column is the one still in progress, and it shows the newest result until its time is over. When a probe finishes, the older probes of the same check that are still running are cancelled, so a slow answer never overwrites a newer one. HydraPing keeps 3600 columns of history per check, five hours at the default width, whatever the terminal size.
+
+### Migration from the version 1 format
+
+A `settings.toml` without a `version` key is in the version 1 format. HydraPing migrates it on the first start:
+
+1. It copies the file to `settings.toml.v1-backup-<date>-<time>` in the same directory.
+2. It rewrites the file in place: `version = 2` is added, `checks.interval_seconds` becomes `checks.bucket_seconds`, `checks.probe_interval_seconds = 1.0` is added, and `dns.custom_servers` becomes `dns.servers`. Comments and layout stay as they were.
+3. It prints one line to stderr with the path of the backup.
+
+If the directory is not writable, the start stops with an error that says what to change by hand. This also applies to files given with `--config`.
 
 Supported endpoint formats:
 - **IPv4 address**: `8.8.8.8` → ICMP ping only
@@ -207,7 +226,8 @@ All applicable checks still run in the background, and failures are reported in 
   - `aiohttp` - Async HTTP requests
   - `Rich` - Terminal UI rendering
   - `Typer` - CLI framework
-- **Time bucketing**: Results are bucketed by check interval for smooth graph scrolling
+- **Probe scheduler**: every check runs on its own schedule; one slow target never delays the others. The engine runs on its own thread, and the terminal UI only reads snapshots of the results
+- **Time bucketing**: results land in epoch-aligned buckets by the time they finished, so all rows share column boundaries
 - **Smart filtering**: Only shows meaningful errors based on what checks succeeded
 
 ## License

@@ -2,10 +2,9 @@
 
 import asyncio
 import time
-from datetime import datetime
 
 from hydraping.core.checkers.base import BaseChecker
-from hydraping.core.models import CheckResult, CheckType
+from hydraping.core.models import CheckType, Measurement
 
 
 class UDPChecker(BaseChecker):
@@ -15,9 +14,8 @@ class UDPChecker(BaseChecker):
         self,
         host: str,
         port: int,
-        iteration_timestamp: datetime,
         probe_data: bytes = b"",
-    ) -> CheckResult:
+    ) -> Measurement:
         """Perform UDP connectivity check.
 
         Sends a probe packet and waits for any response.
@@ -27,7 +25,6 @@ class UDPChecker(BaseChecker):
         Args:
             host: Target host
             port: Target UDP port
-            iteration_timestamp: Timestamp for this check iteration
             probe_data: Custom probe payload (default: empty datagram)
         """
         try:
@@ -62,7 +59,6 @@ class UDPChecker(BaseChecker):
                     return self._create_result(
                         check_type=CheckType.UDP,
                         success=True,
-                        timestamp=iteration_timestamp,
                         latency_ms=latency_ms,
                         port=port,
                     )
@@ -70,7 +66,6 @@ class UDPChecker(BaseChecker):
                     return self._create_result(
                         check_type=CheckType.UDP,
                         success=False,
-                        timestamp=iteration_timestamp,
                         error_message=(
                             f"No response from UDP port {port} "
                             "(service may not respond to empty datagrams)"
@@ -83,7 +78,6 @@ class UDPChecker(BaseChecker):
                 return self._create_result(
                     check_type=CheckType.UDP,
                     success=False,
-                    timestamp=iteration_timestamp,
                     error_message=f"No response from UDP port {port} (timeout)",
                     port=port,
                 )
@@ -92,7 +86,6 @@ class UDPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.UDP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"Network error: {e}",
                 port=port,
             )
@@ -100,7 +93,6 @@ class UDPChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.UDP,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"UDP error: {e}",
                 port=port,
             )

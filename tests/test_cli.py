@@ -21,7 +21,7 @@ def monitored(monkeypatch) -> list[Config]:
 @pytest.fixture
 def config_file(tmp_path):
     path = tmp_path / "settings.toml"
-    path.write_text('[endpoints]\ntargets = ["198.51.100.7"]\n')
+    path.write_text('version = 2\n[endpoints]\ntargets = ["198.51.100.7"]\n')
     return path
 
 

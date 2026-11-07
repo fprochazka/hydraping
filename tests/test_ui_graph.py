@@ -1,18 +1,39 @@
 """Tests for graph rendering."""
 
-import asyncio
-from datetime import datetime
+import threading
+import time
 from io import StringIO
 
-import pytest
 from rich.cells import cell_len
 from rich.console import Console
 
 from hydraping.core.config import Config
+from hydraping.core.engine import Engine
 from hydraping.core.models import CheckResult, CheckType, Endpoint
-from hydraping.core.orchestrator import CheckOrchestrator
 from hydraping.tui.dashboard import Dashboard
 from hydraping.tui.graph import LatencyGraph
+
+
+def icmp_ok(latency_ms: float) -> CheckResult:
+    now = time.time()
+    return CheckResult(
+        check_type=CheckType.ICMP,
+        success=True,
+        latency_ms=latency_ms,
+        started_at=now - 0.01,
+        finished_at=now,
+    )
+
+
+def icmp_failed() -> CheckResult:
+    now = time.time()
+    return CheckResult(
+        check_type=CheckType.ICMP,
+        success=False,
+        error_message="Timeout",
+        started_at=now - 0.01,
+        finished_at=now,
+    )
 
 
 class TestLatencyGraph:
@@ -33,12 +54,7 @@ class TestLatencyGraph:
         graph = LatencyGraph()
 
         # Create a successful result
-        result = CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.ICMP,
-            success=True,
-            latency_ms=25.0,
-        )
+        result = icmp_ok(25.0)
 
         bucketed = [None, None, result, None, None]
         rendered = graph.render(bucketed)
@@ -52,12 +68,7 @@ class TestLatencyGraph:
         """Test that failed check renders exclamation mark."""
         graph = LatencyGraph()
 
-        result = CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.ICMP,
-            success=False,
-            error_message="Timeout",
-        )
+        result = icmp_failed()
 
         bucketed = [None, None, result, None, None]
         rendered = graph.render(bucketed)
@@ -68,19 +79,9 @@ class TestLatencyGraph:
         """Test that small gaps show as exclamation marks."""
         graph = LatencyGraph()
 
-        result1 = CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.ICMP,
-            success=True,
-            latency_ms=10.0,
-        )
+        result1 = icmp_ok(10.0)
 
-        result2 = CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.ICMP,
-            success=True,
-            latency_ms=10.0,
-        )
+        result2 = icmp_ok(10.0)
 
         # Small gap of 3 buckets between results (should show as errors)
         bucketed = [result1, None, None, None, result2, None, None, None, None, None]
@@ -93,19 +94,9 @@ class TestLatencyGraph:
         """Test that large gaps show as dots to avoid noise."""
         graph = LatencyGraph()
 
-        result1 = CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.ICMP,
-            success=True,
-            latency_ms=10.0,
-        )
+        result1 = icmp_ok(10.0)
 
-        result2 = CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.ICMP,
-            success=True,
-            latency_ms=10.0,
-        )
+        result2 = icmp_ok(10.0)
 
         # Large gap of 20 buckets (should show as dots, not errors)
         bucketed = [result1] + [None] * 20 + [result2] + [None] * 28
@@ -120,17 +111,9 @@ GRAPH_CHARS = set(LatencyGraph.BLOCKS) | {"!"}
 
 def _dashboard() -> Dashboard:
     config = Config(endpoints=[Endpoint.parse("192.0.2.1"), Endpoint.parse("example.com")])
-    orchestrator = CheckOrchestrator(config)
-    orchestrator._store_result(
-        config.endpoints[0],
-        CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.ICMP,
-            success=True,
-            latency_ms=12.0,
-        ),
-    )
-    return Dashboard(orchestrator)
+    engine = Engine(config)
+    engine.store.apply(0, [icmp_ok(12.0)])
+    return Dashboard(engine)
 
 
 def _render_lines(dashboard: Dashboard, width: int) -> list[str]:
@@ -160,18 +143,10 @@ class TestDashboardWidth:
     def test_long_name_shrinks_before_the_graph(self):
         endpoint = Endpoint.parse("192.0.2.1")
         endpoint.custom_name = "jumpbox.example.internal-ssh22"  # 30 characters
-        orchestrator = CheckOrchestrator(Config(endpoints=[endpoint]))
-        orchestrator._store_result(
-            endpoint,
-            CheckResult(
-                timestamp=datetime.now(),
-                check_type=CheckType.ICMP,
-                success=True,
-                latency_ms=12.0,
-            ),
-        )
+        engine = Engine(Config(endpoints=[endpoint]))
+        engine.store.apply(0, [icmp_ok(12.0)])
 
-        lines = _render_lines(Dashboard(orchestrator), 65)
+        lines = _render_lines(Dashboard(engine), 65)
 
         [row] = [line for line in lines if "12.0ms" in line]
         assert cell_len(row) <= 65
@@ -193,18 +168,31 @@ class TestDashboardWidth:
         assert len(lines) == 1
         assert cell_len(lines[0]) <= 30
 
-    async def test_cancelled_run_prints_last_frame(self):
+    def test_stopped_run_prints_last_frame(self):
         config = Config(endpoints=[Endpoint.parse("127.0.0.1")])
         console = Console(width=80, file=StringIO(), force_terminal=True, color_system=None)
-        dashboard = Dashboard(CheckOrchestrator(config), console=console)
+        dashboard = Dashboard(Engine(config), console=console)
 
-        task = asyncio.create_task(dashboard.run())
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        thread = threading.Thread(target=dashboard.run)
+        thread.start()
+        time.sleep(0.3)
+        dashboard.stop()
+        thread.join(5.0)
+        assert not thread.is_alive()
 
         output = console.file.getvalue()
         leave_alternate_screen = "\x1b[?1049l"
         assert "\x1b[?1049h" in output
         assert "127.0.0.1" in output.rpartition(leave_alternate_screen)[2]
+
+    def test_failed_current_result_shows_fail(self):
+        config = Config(endpoints=[Endpoint.parse("192.0.2.1")])
+        engine = Engine(config)
+        engine.store.apply(0, [icmp_failed()])
+
+        lines = _render_lines(Dashboard(engine), 80)
+
+        [row] = [line for line in lines if "FAIL" in line]
+        assert row.lstrip().startswith("192.0.2.1") and "(ICMP)" in row
+        assert row.rstrip().endswith("(ICMP)")
+        assert any("192.0.2.1: ICMP: Timeout" in line for line in lines)

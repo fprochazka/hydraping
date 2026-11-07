@@ -1,7 +1,6 @@
 """Main terminal UI dashboard for HydraPing."""
 
-import asyncio
-import time
+import threading
 from dataclasses import dataclass
 
 from rich.console import Console, Group, RenderableType
@@ -9,8 +8,9 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
+from hydraping.core.engine import Engine
 from hydraping.core.models import CheckType, Endpoint
-from hydraping.core.orchestrator import CheckOrchestrator
+from hydraping.core.snapshot import EndpointSnapshot, EngineSnapshot
 from hydraping.tui.constants import get_latency_color
 from hydraping.tui.graph import LatencyGraph
 
@@ -71,44 +71,36 @@ def calculate_column_widths(
 class Dashboard:
     """Live-updating terminal dashboard.
 
-    The dashboard keeps no width between frames. Every ``render()`` reads the console size, so the
-    layout follows terminal resizes.
+    The dashboard reads engine snapshots from the main thread and draws them at ``FRAME_SECONDS``.
+    It keeps no width between frames. Every ``render()`` reads the console size, so the layout
+    follows terminal resizes.
     """
 
-    # How often the loop checks the terminal size. A resize redraws at once.
-    RESIZE_POLL_SECONDS = 0.25
-    # How often the data redraws when the size stays the same. Each frame scans the whole history,
-    # which holds up to HISTORY_CAPACITY results per endpoint, so this stays at once per second.
-    REFRESH_SECONDS = 1.0
+    FRAME_SECONDS = 0.25
 
-    def __init__(self, orchestrator: CheckOrchestrator, console: Console | None = None):
-        """Initialize dashboard with orchestrator.
-
-        Args:
-            orchestrator: The check orchestrator managing endpoint checks
-            console: Optional Rich console (creates new one if not provided)
-        """
-        self.orchestrator = orchestrator
+    def __init__(self, engine: Engine, console: Console | None = None):
+        self.engine = engine
         self.console = console if console is not None else Console()
         self.graph = LatencyGraph()
+        self._stop = threading.Event()
 
     def render(self) -> RenderableType:
         """Render the current state at the console's current width."""
         terminal_width = self.console.size.width
         widths = calculate_column_widths(
-            self.orchestrator.endpoints,
-            terminal_width,
-            self.orchestrator.config.ui.graph_width,
+            self.engine.endpoints, terminal_width, self.engine.config.ui.graph_width
         )
         if widths is None:
             message = Text(
                 f"Terminal too narrow: {terminal_width} columns, needs "
-                f"{minimum_terminal_width(self.orchestrator.endpoints)}",
+                f"{minimum_terminal_width(self.engine.endpoints)}",
                 style="yellow",
             )
             # Cut the message to one line, so a very narrow terminal still gets a single row.
             message.truncate(terminal_width, overflow="ellipsis")
             return message
+
+        snapshot = self.engine.snapshot(columns=widths.graph)
 
         table = Table(show_header=False, box=None, padding=(0, 1))
         table.add_column("Endpoint", width=widths.endpoint, no_wrap=True)
@@ -116,115 +108,77 @@ class Dashboard:
         table.add_column("Time", width=LATENCY_TIME_WIDTH, justify="right", no_wrap=True)
         table.add_column("Protocol", width=PROTOCOL_WIDTH, justify="left", no_wrap=True)
 
-        for endpoint in self.orchestrator.endpoints:
-            self._add_endpoint_row(table, endpoint, widths.graph)
+        for row in snapshot.rows:
+            self._add_endpoint_row(table, row, widths.graph)
 
-        # Build problems section
-        problems_text = self._render_problems()
-        renderables = [table]
-
-        if problems_text:
+        problems = self._problems(snapshot)
+        renderables: list[RenderableType] = [table]
+        if problems:
             renderables.append(Text())  # Empty line
             renderables.append(Text("Problems:", style="bold red"))
-            for problem in problems_text:
+            for problem in problems:
                 renderables.append(Text(f"  • {problem}", style="red"))
 
         return Group(*renderables)
 
-    def _add_endpoint_row(self, table: Table, endpoint: Endpoint, graph_width: int):
-        """Add a row for an endpoint to the table."""
-        # Get result history for this endpoint
-        history = self.orchestrator.get_history(endpoint)
-
-        if history is None:
-            # No data yet
+    def _add_endpoint_row(self, table: Table, row: EndpointSnapshot, graph_width: int):
+        current = row.current
+        if current is not None and current.success and current.latency_ms is not None:
+            check_label = current.check_type.value.upper()
+            if current.check_type == CheckType.TCP and current.port:
+                check_label = f"TCP:{current.port}"
+            elif current.check_type == CheckType.HTTP and current.protocol:
+                check_label = current.protocol.upper()
+            time_str = f"{current.latency_ms:.1f}ms"
+            protocol_str = f"({check_label})"
+            latency_style = get_latency_color(current.latency_ms)
+        elif current is not None:
+            time_str = "FAIL"
+            protocol_str = f"({current.check_type.value.upper()})"
+            latency_style = "red"
+        else:
             time_str = "N/A"
             protocol_str = ""
             latency_style = "dim"
-            graph_text = self.graph.render([None] * graph_width)
-        else:
-            # Get the current result (what should be displayed now)
-            # This is synchronized with what the graph shows
-            latency_result = history.get_current_result()
 
-            # Format latency time and protocol separately
-            if latency_result and latency_result.success and latency_result.latency_ms is not None:
-                # Build check label with port/protocol info
-                check_label = latency_result.check_type.value.upper()
-                if latency_result.check_type == CheckType.TCP and latency_result.port:
-                    check_label = f"TCP:{latency_result.port}"
-                elif latency_result.check_type == CheckType.HTTP and latency_result.protocol:
-                    check_label = latency_result.protocol.upper()
-
-                time_str = f"{latency_result.latency_ms:.1f}ms"
-                protocol_str = f"({check_label})"
-                latency_style = get_latency_color(latency_result.latency_ms)
-            elif latency_result and not latency_result.success:
-                check_label = latency_result.check_type.value.upper()
-                time_str = "FAIL"
-                protocol_str = f"({check_label})"
-                latency_style = "red"
-            else:
-                time_str = "N/A"
-                protocol_str = ""
-                latency_style = "dim"
-
-            # Get bucketed results and render the graph
-            # History prepares the ready-to-render list, graph just renders it
-            bucketed_results = history.get_bucketed_results(graph_width)
-            graph_text = self.graph.render(bucketed_results)
-
-        # Add row
+        primary_layer = row.primary_layer()
+        results = primary_layer.results() if primary_layer is not None else [None] * graph_width
         table.add_row(
-            Text(endpoint.display_name, style="bold"),
-            graph_text,
+            Text(row.endpoint.display_name, style="bold"),
+            self.graph.render(results),
             Text(time_str, style=latency_style),
             Text(protocol_str, style="dim"),
         )
 
-    def _render_problems(self) -> list[str]:
-        """Get list of current problems across all endpoints."""
+    @staticmethod
+    def _problems(snapshot: EngineSnapshot) -> list[str]:
         problems = []
-        icmp_unavailable_shown = False
-
-        # Check if ICMP is globally unavailable
-        if not self.orchestrator.icmp_checker.is_available() and not icmp_unavailable_shown:
+        if not snapshot.icmp_available:
             problems.append("ICMP unavailable (no permissions) - ping checks disabled")
-            icmp_unavailable_shown = True
-
-        # Add endpoint-specific problems
-        for endpoint in self.orchestrator.endpoints:
-            endpoint_problems = self.orchestrator.get_problems(endpoint)
-            for problem in endpoint_problems:
-                problems.append(f"{endpoint.display_name}: {problem}")
-
+        for row in snapshot.rows:
+            for problem in row.problems:
+                problems.append(f"{row.endpoint.display_name}: {problem}")
         return problems
 
-    async def run(self):
-        """Run the live dashboard on the alternate screen until cancelled.
+    def stop(self) -> None:
+        """Make ``run()`` return after its current frame. Safe to call from another thread."""
+        self._stop.set()
+
+    def run(self) -> None:
+        """Run the live dashboard on the alternate screen until ``stop()`` or Ctrl+C.
 
         The alternate screen gets cleared on every frame, so a resize leaves no stale lines. On
         exit, including Ctrl+C, the last frame goes to normal output and stays in scrollback.
         """
-        # The loop redraws in the event loop thread rather than through Live's refresh thread,
-        # because check results mutate the history in this thread.
         live = Live(self.render(), console=self.console, auto_refresh=False, screen=True)
         live.start()
         try:
-            await self.orchestrator.start()
-            last_size = self.console.size
-            last_refresh = time.monotonic()
-            while True:
-                await asyncio.sleep(self.RESIZE_POLL_SECONDS)
-                size = self.console.size
-                now = time.monotonic()
-                if size != last_size or now - last_refresh >= self.REFRESH_SECONDS:
-                    live.update(self.render(), refresh=True)
-                    last_size = size
-                    last_refresh = now
+            self.engine.start()
+            while not self._stop.wait(self.FRAME_SECONDS):
+                live.update(self.render(), refresh=True)
         finally:
             try:
-                await self.orchestrator.stop()
+                self.engine.stop()
             finally:
                 live.stop()
                 self.console.print(self.render())

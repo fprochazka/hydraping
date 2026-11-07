@@ -1,26 +1,49 @@
 """Configuration management for HydraPing."""
 
+import os
+import shutil
+import sys
+import tempfile
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
+import tomlkit
+import tomlkit.items
+
 from hydraping.core.models import CheckType, Endpoint
+
+# The format this release reads. A file without ``version`` is the v1 format and gets migrated.
+CONFIG_VERSION = 2
 
 
 @dataclass
 class DNSConfig:
     """DNS check configuration."""
 
-    custom_servers: list[str] = field(default_factory=list)
+    servers: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ChecksConfig:
-    """General checks configuration."""
+    """Probe timing.
 
-    interval_seconds: float = 5.0
+    Probes start every ``probe_interval_seconds`` and may overlap: a probe that has not answered
+    yet does not hold back the next one. ``bucket_seconds`` is the width of one graph column.
+    """
+
+    probe_interval_seconds: float = 1.0
+    bucket_seconds: float = 5.0
     timeout_seconds: float = 5.0
     http_success_status_max: int = 399  # HTTP status codes <= this are considered success
+
+    def __post_init__(self):
+        for name in ("probe_interval_seconds", "bucket_seconds", "timeout_seconds"):
+            value = getattr(self, name)
+            if not isinstance(value, int | float) or isinstance(value, bool) or value <= 0:
+                raise ValueError(f"checks.{name} must be a positive number, got: {value!r}")
 
 
 @dataclass
@@ -40,10 +63,20 @@ class Config:
     ui: UIConfig = field(default_factory=UIConfig)
 
     @staticmethod
-    def load(config_path: Path | None = None) -> "Config":
-        """Load configuration from TOML file."""
+    def load(
+        config_path: Path | None = None,
+        on_migrated: Callable[[Path, Path], None] | None = None,
+    ) -> "Config":
+        """Load configuration from a TOML file.
+
+        A v1 file (no ``version`` key) is migrated in place first; see ``migrate_v1_config``.
+        ``on_migrated`` gets the file path and the backup path when that happens. The default
+        prints one notice to stderr.
+        """
         if config_path is None:
             config_path = get_default_config_path()
+        if on_migrated is None:
+            on_migrated = _print_migration_notice
 
         if not config_path.exists():
             raise FileNotFoundError(
@@ -53,6 +86,19 @@ class Config:
 
         with config_path.open("rb") as f:
             data = tomllib.load(f)
+
+        if "version" not in data:
+            backup_path = migrate_v1_config(config_path)
+            on_migrated(config_path, backup_path)
+            with config_path.open("rb") as f:
+                data = tomllib.load(f)
+
+        version = data["version"]
+        if version != CONFIG_VERSION:
+            raise ValueError(
+                f"Unsupported config version {version!r} in {config_path}; "
+                f"this version of hydraping reads version {CONFIG_VERSION}"
+            )
 
         _reject_unknown_keys(data, config_path)
 
@@ -178,29 +224,20 @@ class Config:
         if not endpoints:
             raise ValueError("No valid endpoints after parsing")
 
-        # Parse DNS config
-        dns_data = data.get("dns", {})
-        dns = DNSConfig(custom_servers=dns_data.get("custom_servers", []))
+        dns = DNSConfig(servers=data.get("dns", {}).get("servers", []))
 
-        # Parse checks config
         checks_data = data.get("checks", {})
+        defaults = ChecksConfig()
         checks = ChecksConfig(
-            interval_seconds=checks_data.get("interval_seconds", 5.0),
-            timeout_seconds=checks_data.get("timeout_seconds", 5.0),
-            http_success_status_max=checks_data.get("http_success_status_max", 399),
+            probe_interval_seconds=checks_data.get(
+                "probe_interval_seconds", defaults.probe_interval_seconds
+            ),
+            bucket_seconds=checks_data.get("bucket_seconds", defaults.bucket_seconds),
+            timeout_seconds=checks_data.get("timeout_seconds", defaults.timeout_seconds),
+            http_success_status_max=checks_data.get(
+                "http_success_status_max", defaults.http_success_status_max
+            ),
         )
-
-        # Validate timeout doesn't exceed interval
-        if checks.timeout_seconds >= checks.interval_seconds:
-            import warnings
-
-            warnings.warn(
-                f"timeout_seconds ({checks.timeout_seconds}s) should be less than "
-                f"interval_seconds ({checks.interval_seconds}s) to avoid overlapping checks. "
-                "This may lead to resource issues.",
-                UserWarning,
-                stacklevel=2,
-            )
 
         # Parse UI config
         ui_data = data.get("ui", {})
@@ -213,10 +250,17 @@ class Config:
 # typo (for example "intervl_seconds") would leave the default in effect without any hint.
 _KNOWN_TABLE_KEYS: dict[str, set[str]] = {
     "endpoints": {"targets"},
-    "dns": {"custom_servers"},
-    "checks": {"interval_seconds", "timeout_seconds", "http_success_status_max"},
+    "dns": {"servers"},
+    "checks": {
+        "probe_interval_seconds",
+        "bucket_seconds",
+        "timeout_seconds",
+        "http_success_status_max",
+    },
     "ui": {"graph_width"},
 }
+# Top-level keys that are values, not tables.
+_KNOWN_TOP_LEVEL_VALUES = {"version"}
 _KNOWN_ENDPOINT_KEYS = {
     "url",
     "name",
@@ -235,6 +279,8 @@ def _reject_unknown_keys(data: dict, config_path: Path) -> None:
         return ValueError(f"Unknown key '{key_path}' in {config_path}")
 
     for table_name, table in data.items():
+        if table_name in _KNOWN_TOP_LEVEL_VALUES:
+            continue
         if table_name not in _KNOWN_TABLE_KEYS:
             raise unknown(table_name)
         if not isinstance(table, dict):
@@ -259,6 +305,77 @@ def _reject_unknown_keys(data: dict, config_path: Path) -> None:
                 raise unknown(f"endpoints.targets[{index}].{key}")
 
 
+def _print_migration_notice(config_path: Path, backup_path: Path) -> None:
+    print(
+        f"Migrated {config_path} to the version {CONFIG_VERSION} format. "
+        f"The original is kept at {backup_path}",
+        file=sys.stderr,
+    )
+
+
+def migrate_v1_config(config_path: Path) -> Path:
+    """Rewrite a v1 settings file as v2 in place and return the path of the backup.
+
+    The backup is a copy named ``<name>.v1-backup-<YYYYmmdd-HHMMSS>`` in the same directory, and
+    it is written before anything else. The rewrite goes through tomlkit, so comments and layout
+    survive, and lands through a temporary file plus rename, so a crash leaves either the old file
+    or the new one, never a half-written one. The v1 keys ``checks.interval_seconds`` and
+    ``dns.custom_servers`` are renamed in place; ``version`` and ``checks.probe_interval_seconds``
+    are added.
+
+    Raises OSError when the directory cannot be written. Nothing is changed in that case.
+    """
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_path = config_path.with_name(f"{config_path.name}.v1-backup-{stamp}")
+    try:
+        shutil.copy2(config_path, backup_path)
+    except OSError as e:
+        raise OSError(
+            f"Cannot migrate {config_path} to the version {CONFIG_VERSION} format: the backup "
+            f"{backup_path} could not be written ({e.strerror}). Make the directory writable, "
+            "or migrate the file by hand: add 'version = 2', rename checks.interval_seconds to "
+            "checks.bucket_seconds and dns.custom_servers to dns.servers."
+        ) from e
+
+    document = tomlkit.parse(config_path.read_text())
+    document.add("version", CONFIG_VERSION)
+    _rename_key(document, "checks", "interval_seconds", "bucket_seconds", config_path)
+    _rename_key(document, "dns", "custom_servers", "servers", config_path)
+    checks = document.get("checks")
+    if checks is None:
+        checks = tomlkit.table()
+        document.add("checks", checks)
+    if "probe_interval_seconds" not in checks:
+        checks["probe_interval_seconds"] = ChecksConfig().probe_interval_seconds
+
+    fd, temp_name = tempfile.mkstemp(dir=config_path.parent, prefix=f".{config_path.name}.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(tomlkit.dumps(document))
+        shutil.copymode(config_path, temp_name)
+        os.replace(temp_name, config_path)
+    except BaseException:
+        Path(temp_name).unlink(missing_ok=True)
+        raise
+    return backup_path
+
+
+def _rename_key(
+    document: tomlkit.TOMLDocument, table_name: str, old: str, new: str, config_path: Path
+) -> None:
+    table = document.get(table_name)
+    if table is None or old not in table:
+        return
+    if new in table:
+        raise ValueError(
+            f"{config_path} has both {table_name}.{old} and {table_name}.{new}; "
+            f"keep only {table_name}.{new}"
+        )
+    # tomlkit has no public rename. Assigning a new key would move it to the end of the table and
+    # away from its comments; _replace keeps the position and the trailing comment.
+    table.value._replace(old, new, table[old])
+
+
 def get_default_config_path() -> Path:
     """Get the default configuration file path."""
     return Path.home() / ".config" / "hydraping" / "settings.toml"
@@ -274,6 +391,7 @@ def create_default_config(config_path: Path | None = None) -> Path:
 
     # Default configuration content
     default_config = """# HydraPing Configuration
+version = 2
 
 [endpoints]
 # List of endpoints to monitor
@@ -306,14 +424,17 @@ targets = [
 ]
 
 [dns]
-# Optional: Custom DNS servers to query against (in addition to system DNS)
-custom_servers = []
+# Optional: DNS servers to query instead of the system resolver
+servers = []
 
 [checks]
-# How often to perform checks (in seconds)
-interval_seconds = 5.0
+# How often a new probe starts (in seconds). Probes overlap: a slow one does not delay the next.
+probe_interval_seconds = 1.0
 
-# Timeout for individual checks (in seconds)
+# Width of one graph column (in seconds). The newest column keeps updating until its time is over.
+bucket_seconds = 5.0
+
+# Timeout for one probe (in seconds)
 timeout_seconds = 5.0
 
 # Maximum HTTP status code considered successful (default: 399)

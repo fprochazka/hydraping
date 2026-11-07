@@ -1,14 +1,13 @@
 """DNS resolver checker."""
 
 import time
-from datetime import datetime
 
 import dns.asyncresolver
 import dns.exception
 import dns.resolver
 
 from hydraping.core.checkers.base import BaseChecker
-from hydraping.core.models import CheckResult, CheckType
+from hydraping.core.models import CheckType, Measurement
 
 
 class DNSChecker(BaseChecker):
@@ -32,14 +31,11 @@ class DNSChecker(BaseChecker):
         """
         return self._resolved_ips.get(target)
 
-    async def check(
-        self, target: str, iteration_timestamp: datetime, ip_version: int | None = None
-    ) -> CheckResult:
+    async def check(self, target: str, ip_version: int | None = None) -> Measurement:
         """Perform DNS resolution check.
 
         Args:
             target: Domain name to resolve
-            iteration_timestamp: Timestamp for this iteration
             ip_version: Optional IP version preference (4 or 6)
         """
         try:
@@ -75,7 +71,6 @@ class DNSChecker(BaseChecker):
                         return self._create_result(
                             check_type=CheckType.DNS,
                             success=False,
-                            timestamp=iteration_timestamp,
                             error_message="No A or AAAA records found",
                         )
 
@@ -86,7 +81,6 @@ class DNSChecker(BaseChecker):
                 return self._create_result(
                     check_type=CheckType.DNS,
                     success=False,
-                    timestamp=iteration_timestamp,
                     error_message="No A or AAAA records returned",
                 )
 
@@ -102,7 +96,6 @@ class DNSChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.DNS,
                 success=True,
-                timestamp=iteration_timestamp,
                 latency_ms=latency_ms,
                 resolved_ip=resolved_ip,
             )
@@ -111,34 +104,29 @@ class DNSChecker(BaseChecker):
             return self._create_result(
                 check_type=CheckType.DNS,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message="Domain does not exist (NXDOMAIN)",
             )
         except dns.resolver.Timeout:
             return self._create_result(
                 check_type=CheckType.DNS,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"DNS query timeout (>{self.timeout}s)",
             )
         except dns.resolver.NoAnswer:
             return self._create_result(
                 check_type=CheckType.DNS,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message="No DNS answer received",
             )
         except dns.resolver.NoNameservers:
             return self._create_result(
                 check_type=CheckType.DNS,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message="No nameservers available",
             )
         except Exception as e:
             return self._create_result(
                 check_type=CheckType.DNS,
                 success=False,
-                timestamp=iteration_timestamp,
                 error_message=f"DNS error: {e}",
             )

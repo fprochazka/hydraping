@@ -1,8 +1,5 @@
 """Tests for core data models and result history."""
 
-import time
-from datetime import datetime
-
 import pytest
 
 from hydraping.core.models import (
@@ -11,10 +8,10 @@ from hydraping.core.models import (
     CheckType,
     DomainEndpoint,
     Endpoint,
-    EndpointResultHistory,
     HTTPEndpoint,
     IPEndpoint,
     IPPortEndpoint,
+    Measurement,
     UDPPortEndpoint,
 )
 
@@ -184,11 +181,27 @@ class TestPrimaryCheckType:
 class TestCheckResult:
     """Test CheckResult validation."""
 
+    def test_from_measurement_keeps_every_field(self):
+        measurement = Measurement(
+            check_type=CheckType.TCP,
+            success=True,
+            latency_ms=3.5,
+            port=443,
+            resolved_ip="192.0.2.1",
+        )
+        result = CheckResult.from_measurement(measurement, started_at=10.0, finished_at=10.1)
+        assert result.check_type == CheckType.TCP
+        assert result.latency_ms == 3.5
+        assert result.port == 443
+        assert result.resolved_ip == "192.0.2.1"
+        assert (result.started_at, result.finished_at) == (10.0, 10.1)
+
     def test_successful_check_requires_latency(self):
         """Test that successful checks must have latency."""
         with pytest.raises(ValueError, match="Successful check must have latency"):
             CheckResult(
-                timestamp=datetime.now(),
+                started_at=1000.0,
+                finished_at=1000.5,
                 check_type=CheckType.ICMP,
                 success=True,
                 latency_ms=None,  # Missing latency
@@ -198,7 +211,8 @@ class TestCheckResult:
         """Test that failed checks must have error message."""
         with pytest.raises(ValueError, match="Failed check must have error message"):
             CheckResult(
-                timestamp=datetime.now(),
+                started_at=1000.0,
+                finished_at=1000.5,
                 check_type=CheckType.ICMP,
                 success=False,
                 error_message=None,  # Missing error
@@ -207,7 +221,8 @@ class TestCheckResult:
     def test_valid_successful_check(self):
         """Test creating valid successful check."""
         result = CheckResult(
-            timestamp=datetime.now(),
+            started_at=1000.0,
+            finished_at=1000.5,
             check_type=CheckType.ICMP,
             success=True,
             latency_ms=10.5,
@@ -218,7 +233,8 @@ class TestCheckResult:
     def test_valid_failed_check(self):
         """Test creating valid failed check."""
         result = CheckResult(
-            timestamp=datetime.now(),
+            started_at=1000.0,
+            finished_at=1000.5,
             check_type=CheckType.ICMP,
             success=False,
             error_message="Timeout",
@@ -227,126 +243,7 @@ class TestCheckResult:
         assert result.error_message == "Timeout"
 
 
-class TestEndpointResultHistory:
-    """Test EndpointResultHistory time bucketing and result selection."""
-
-    def test_add_result_initializes_start_times(self):
-        """Test that adding first result initializes start times."""
-        history = EndpointResultHistory(interval_seconds=5.0)
-        assert history.start_time is None
-        assert history.start_timestamp is None
-
-        result = CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.ICMP,
-            success=True,
-            latency_ms=10.0,
-        )
-        history.add_result(result)
-
-        assert history.start_time is not None
-        assert history.start_timestamp is not None
-
-    def test_get_bucketed_results_empty(self):
-        """Test getting bucketed results when no data."""
-        history = EndpointResultHistory(interval_seconds=5.0)
-        bucketed = history.get_bucketed_results(10)
-
-        assert len(bucketed) == 10
-        assert all(r is None for r in bucketed)
-
-    def test_get_bucketed_results_with_data(self):
-        """Test bucketing with actual results."""
-        history = EndpointResultHistory(interval_seconds=1.0)
-
-        # Add results manually setting start times
-        history.start_time = time.monotonic()
-        history.start_timestamp = time.time()
-
-        result1 = CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.ICMP,
-            success=True,
-            latency_ms=10.0,
-        )
-        result2 = CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.TCP,
-            success=True,
-            latency_ms=20.0,
-            port=80,
-        )
-
-        history.add_result(result1)
-        time.sleep(0.1)  # Small delay
-        history.add_result(result2)
-
-        bucketed = history.get_bucketed_results(5)
-        assert len(bucketed) == 5
-
-    def test_priority_selection_prefers_higher_checks(self):
-        """Test that higher priority checks are selected over lower."""
-        history = EndpointResultHistory(interval_seconds=1.0)
-        history.start_time = time.monotonic()
-        history.start_timestamp = time.time()
-
-        # Add ICMP result
-        icmp_result = CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.ICMP,
-            success=True,
-            latency_ms=10.0,
-        )
-        history.add_result(icmp_result)
-
-        # Add HTTP result (higher priority)
-        http_result = CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.HTTP,
-            success=True,
-            latency_ms=50.0,
-            protocol="https",
-        )
-        history.add_result(http_result)
-
-        current = history.get_current_result()
-        # Without primary_check_type filter, should get highest priority (HTTP)
-        # But we need to wait for the logic - let me check the actual behavior
-        # The current bucket should have both, and _select_better_result should pick HTTP
-        assert current is not None
-
-    def test_primary_check_type_filter(self):
-        """Test that primary_check_type filters results correctly."""
-        history = EndpointResultHistory(
-            interval_seconds=1.0,
-            primary_check_type=CheckType.ICMP,
-        )
-        history.start_time = time.monotonic()
-        history.start_timestamp = time.time()
-
-        # Add ICMP result
-        icmp_result = CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.ICMP,
-            success=True,
-            latency_ms=10.0,
-        )
-        history.add_result(icmp_result)
-
-        # Add HTTP result (should be filtered out)
-        http_result = CheckResult(
-            timestamp=datetime.now(),
-            check_type=CheckType.HTTP,
-            success=True,
-            latency_ms=50.0,
-            protocol="https",
-        )
-        history.add_result(http_result)
-
-        current = history.get_current_result()
-        assert current is not None
-        assert current.check_type == CheckType.ICMP
-
+class TestCheckTypePriority:
     def test_check_type_priority_order(self):
         """Test that CHECK_TYPE_PRIORITY is correctly ordered."""
         assert CHECK_TYPE_PRIORITY[0] == CheckType.HTTP

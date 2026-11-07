@@ -24,6 +24,7 @@ class TestConfigLoading:
         """Test loading a simple config with basic endpoints."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
+version = 2
 [endpoints]
 targets = [
     "8.8.8.8",
@@ -32,10 +33,11 @@ targets = [
 ]
 
 [dns]
-custom_servers = []
+servers = []
 
 [checks]
-interval_seconds = 5.0
+probe_interval_seconds = 1.0
+bucket_seconds = 5.0
 timeout_seconds = 5.0
 
 [ui]
@@ -52,6 +54,7 @@ graph_width = 0
         """Test loading config with custom endpoint names."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
+version = 2
 [endpoints]
 targets = [
     { url = "8.8.8.8", name = "Google DNS" },
@@ -67,6 +70,7 @@ targets = [
         """Test loading UDP endpoints from config."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
+version = 2
 [endpoints]
 targets = [
     { url = "1.1.1.1:53", protocol = "udp", name = "Cloudflare DNS (UDP)" },
@@ -83,6 +87,7 @@ targets = [
         """Test loading UDP endpoint with hex probe data."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
+version = 2
 [endpoints]
 targets = [
     { url = "1.1.1.1:53", protocol = "udp", probe_hex = "deadbeef" },
@@ -98,6 +103,7 @@ targets = [
         """Test loading UDP endpoint with ASCII probe data."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
+version = 2
 [endpoints]
 targets = [
     { url = "1.1.1.1:123", protocol = "udp", probe_ascii = "hello" },
@@ -113,6 +119,7 @@ targets = [
         """Test loading config with IP version preference."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
+version = 2
 [endpoints]
 targets = [
     { url = "google.com", ip_version = 4 },
@@ -128,6 +135,7 @@ targets = [
         """Test loading config with HTTP success status threshold."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
+version = 2
 [endpoints]
 targets = ["google.com"]
 
@@ -142,6 +150,7 @@ http_success_status_max = 299
         """Test that config without endpoints raises error."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
+version = 2
 [endpoints]
 targets = []
 """)
@@ -153,6 +162,7 @@ targets = []
         """Test that endpoint object without url raises error."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
+version = 2
 [endpoints]
 targets = [
     { name = "Missing URL" }
@@ -166,6 +176,7 @@ targets = [
         """Test that invalid hex in probe_hex raises error."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
+version = 2
 [endpoints]
 targets = [
     { url = "1.1.1.1:53", protocol = "udp", probe_hex = "invalid" },
@@ -181,7 +192,7 @@ class TestUnknownKeys:
 
     def _write(self, tmp_path, body: str):
         config_file = tmp_path / "settings.toml"
-        config_file.write_text('[endpoints]\ntargets = ["192.0.2.1"]\n' + body)
+        config_file.write_text('version = 2\n[endpoints]\ntargets = ["192.0.2.1"]\n' + body)
         return config_file
 
     def test_unknown_top_level_table(self, tmp_path):
@@ -199,6 +210,7 @@ class TestUnknownKeys:
     def test_unknown_key_in_endpoint_object(self, tmp_path):
         config_file = tmp_path / "settings.toml"
         config_file.write_text("""
+version = 2
 [endpoints]
 targets = [
     "192.0.2.1",
@@ -210,26 +222,43 @@ targets = [
         assert str(error.value) == f"Unknown key 'endpoints.targets[1].nmae' in {config_file}"
 
 
+class TestConfigVersion:
+    def test_unsupported_version_is_an_error(self, tmp_path):
+        config_file = tmp_path / "settings.toml"
+        config_file.write_text('version = 3\n[endpoints]\ntargets = ["192.0.2.1"]\n')
+        with pytest.raises(ValueError, match="Unsupported config version 3"):
+            Config.load(config_file)
+
+    def test_v1_keys_in_a_v2_file_are_unknown(self, tmp_path):
+        config_file = tmp_path / "settings.toml"
+        config_file.write_text(
+            'version = 2\n[endpoints]\ntargets = ["192.0.2.1"]\n[checks]\ninterval_seconds = 5.0\n'
+        )
+        with pytest.raises(ValueError) as error:
+            Config.load(config_file)
+        assert str(error.value) == f"Unknown key 'checks.interval_seconds' in {config_file}"
+
+
 class TestConfigShape:
     """Test that values of the wrong kind stop loading with the key path."""
 
     def test_table_that_is_not_a_table(self, tmp_path):
         config_file = tmp_path / "settings.toml"
-        config_file.write_text('checks = 5\n[endpoints]\ntargets = ["192.0.2.1"]\n')
+        config_file.write_text('version = 2\nchecks = 5\n[endpoints]\ntargets = ["192.0.2.1"]\n')
         with pytest.raises(ValueError) as error:
             Config.load(config_file)
         assert str(error.value) == f"'checks' must be a table in {config_file}"
 
     def test_targets_that_is_not_a_list(self, tmp_path):
         config_file = tmp_path / "settings.toml"
-        config_file.write_text('[endpoints]\ntargets = "192.0.2.1"\n')
+        config_file.write_text('version = 2\n[endpoints]\ntargets = "192.0.2.1"\n')
         with pytest.raises(ValueError) as error:
             Config.load(config_file)
         assert str(error.value) == f"'endpoints.targets' must be a list in {config_file}"
 
     def test_target_that_is_neither_string_nor_table(self, tmp_path):
         config_file = tmp_path / "settings.toml"
-        config_file.write_text('[endpoints]\ntargets = ["192.0.2.1", 53]\n')
+        config_file.write_text('version = 2\n[endpoints]\ntargets = ["192.0.2.1", 53]\n')
         with pytest.raises(ValueError) as error:
             Config.load(config_file)
         assert str(error.value) == (
@@ -243,14 +272,19 @@ class TestConfigClasses:
     def test_dns_config_defaults(self):
         """Test DNSConfig default values."""
         dns = DNSConfig()
-        assert dns.custom_servers == []
+        assert dns.servers == []
 
     def test_checks_config_defaults(self):
         """Test ChecksConfig default values."""
         checks = ChecksConfig()
-        assert checks.interval_seconds == 5.0
+        assert checks.probe_interval_seconds == 1.0
+        assert checks.bucket_seconds == 5.0
         assert checks.timeout_seconds == 5.0
         assert checks.http_success_status_max == 399
+
+    def test_checks_config_rejects_non_positive_timing(self):
+        with pytest.raises(ValueError, match="checks.bucket_seconds must be a positive number"):
+            ChecksConfig(bucket_seconds=0)
 
     def test_ui_config_defaults(self):
         """Test UIConfig default values."""
