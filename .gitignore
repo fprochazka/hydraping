@@ -35,6 +35,7 @@ env/
 
 # Claude Code
 /.claude/settings.local.json
+/.claude/plans/
 
 # HydraPing
 settings.toml
