@@ -9,10 +9,18 @@ from rich.table import Table
 from rich.text import Text
 
 from hydraping.core.config import Chain
+from hydraping.core.display import (
+    ChainState,
+    chain_status,
+    interface_label,
+    latency_text,
+    problem_lines,
+    route_label,
+)
 from hydraping.core.engine import Engine
-from hydraping.core.models import CheckType, Endpoint
-from hydraping.core.snapshot import ChainSnapshot, EndpointSnapshot, EngineSnapshot
-from hydraping.tui.constants import get_latency_color
+from hydraping.core.models import Endpoint
+from hydraping.core.snapshot import ChainSnapshot, EndpointSnapshot
+from hydraping.tui.constants import RICH_COLORS
 from hydraping.tui.graph import LatencyGraph
 
 # Fixed columns: "999.9ms" fits in 8 characters, "(TCP:65535)" and "(TS direct)" in 11.
@@ -61,23 +69,6 @@ def minimum_terminal_width(names: list[str]) -> int:
     """Return the narrowest terminal that fits every column at its smallest width."""
     smallest_endpoint, _ = _endpoint_width_bounds(names)
     return smallest_endpoint + FIXED_WIDTH + MIN_GRAPH_WIDTH
-
-
-def interface_label(interface: str) -> str:
-    return f"via {interface}"
-
-
-def route_label(row: EndpointSnapshot) -> str:
-    """Return the text of the interface column: the relay of a relayed Tailscale peer, otherwise
-    the outgoing interface, or nothing when neither is known."""
-    if row.relay:
-        return interface_label(row.relay)
-    return interface_label(row.interface) if row.interface else ""
-
-
-def layer_label(check_type: CheckType) -> str:
-    """Return the short name of a layer for the protocol column."""
-    return "TS" if check_type == CheckType.TAILSCALE else check_type.value.upper()
 
 
 def calculate_column_widths(
@@ -167,7 +158,7 @@ class Dashboard:
                 table.add_row()  # An empty line before each chain.
             self._add_chain_rows(table, chain, widths)
 
-        problems = self._problems(snapshot)
+        problems = problem_lines(snapshot)
         renderables: list[RenderableType] = [table]
         if problems:
             renderables.append(Text())  # Empty line
@@ -178,13 +169,9 @@ class Dashboard:
         return Group(*renderables)
 
     def _add_chain_rows(self, table: Table, chain: ChainSnapshot, widths: ColumnWidths):
-        if chain.broken_at is not None:
-            status = Text(f"broken at {chain.hops[chain.broken_at].endpoint.display_name}")
-            status.stylize("red")
-        elif chain.hops and all(hop.current is not None for hop in chain.hops):
-            status = Text("OK", style="green")
-        else:
-            status = Text("")
+        chain_state = chain_status(chain)
+        status_style = {ChainState.BROKEN: "red", ChainState.OK: "green"}.get(chain_state.state)
+        status = Text(chain_state.text, style=status_style or "")
         status.truncate(widths.graph, overflow="ellipsis")
         table.add_row(Text(chain.name, style="bold underline"), status)
         for hop in chain.hops:
@@ -193,55 +180,22 @@ class Dashboard:
     def _add_endpoint_row(
         self, table: Table, row: EndpointSnapshot, widths: ColumnWidths, indent: str = ""
     ):
-        current = row.current
-        if current is not None and current.success and current.latency_ms is not None:
-            check_label = current.check_type.value.upper()
-            if current.check_type == CheckType.TCP and current.port:
-                check_label = f"TCP:{current.port}"
-            elif current.check_type == CheckType.HTTP and current.protocol:
-                check_label = current.protocol.upper()
-            elif current.check_type == CheckType.TAILSCALE:
-                check_label = "TS relay" if current.relay else "TS direct"
-            time_str = f"{current.latency_ms:.1f}ms"
-            protocol_str = f"({check_label})"
-            latency_style = get_latency_color(current.latency_ms)
-        elif current is not None:
-            # Name the layer that broke, which for a skipped primary layer is an earlier one.
-            failed_layer = current.failed_layer or current.check_type
-            time_str = "FAIL"
-            protocol_str = f"({layer_label(failed_layer)})"
-            latency_style = "red"
-        else:
-            time_str = "N/A"
-            protocol_str = ""
-            latency_style = "dim"
+        latency = latency_text(row.current)
+        latency_style = RICH_COLORS[latency.color] if latency.color is not None else "dim"
 
         primary_layer = row.primary_layer()
         results = primary_layer.results() if primary_layer is not None else [None] * widths.graph
         cells = [
             Text(indent + row.endpoint.display_name, style="bold"),
             self.graph.render(results),
-            Text(time_str, style=latency_style),
-            Text(protocol_str, style="dim"),
+            Text(latency.text, style=latency_style),
+            Text(latency.label, style="dim"),
         ]
         if widths.interface:
             # An interface that appeared after the widths were computed is cut by Rich, which is
             # harmless for one frame.
             cells.append(Text(route_label(row), style="dim"))
         table.add_row(*cells)
-
-    @staticmethod
-    def _problems(snapshot: EngineSnapshot) -> list[str]:
-        problems = []
-        if not snapshot.icmp_available:
-            problems.append("ICMP unavailable (no permissions) - ping checks disabled")
-        for row in snapshot.rows:
-            for problem in row.problems:
-                problems.append(f"{row.endpoint.display_name}: {problem}")
-        for chain in snapshot.chains:
-            for problem in chain.problems:
-                problems.append(f"{chain.name}: {problem}")
-        return problems
 
     def stop(self) -> None:
         """Make ``run()`` return after its current frame. Safe to call from another thread."""
