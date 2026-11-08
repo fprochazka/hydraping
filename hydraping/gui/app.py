@@ -6,12 +6,12 @@ import sys
 import time
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtWidgets import QApplication
 
 from hydraping.core.config import Config
 from hydraping.core.engine import Engine
-from hydraping.gui import instance
+from hydraping.gui import instance, launcher
 from hydraping.gui.tray import TrayService, print_unavailable
 from hydraping.gui.tray_status import tray_status
 from hydraping.gui.window import WINDOW_TITLE, MainWindow
@@ -184,6 +184,15 @@ class GuiApp:
         return 0
 
 
+def application_icon() -> QIcon:
+    """Return the packaged SVG icon, which Qt renders at every size it is asked for.
+
+    Qt reads the file when it first draws the icon, so the file has to stay where it is. It does
+    for a package installed as files, the way uv and pip install it.
+    """
+    return QIcon(str(launcher.icon_resource()))
+
+
 def run_gui(config: Config, hidden: bool = False) -> int:
     """Run the desktop app for ``config`` and return its exit code."""
     qt_app = QApplication.instance()
@@ -193,4 +202,6 @@ def run_gui(config: Config, hidden: bool = False) -> int:
     qt_app.setApplicationName(WINDOW_TITLE)
     # The Wayland app id, which the shell uses to group the window and to find its icon.
     qt_app.setDesktopFileName("hydraping")
+    # The icon of every window, for desktops that don't take it from the launcher.
+    qt_app.setWindowIcon(application_icon())
     return GuiApp(config, qt_app, hidden=hidden).run()

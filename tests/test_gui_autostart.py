@@ -73,7 +73,7 @@ class TestInstall:
         entry = read_entry(path)
         assert entry["Type"] == "Application"
         assert entry["Name"] == "HydraPing"
-        assert entry["Icon"] == "network-transmit-receive"
+        assert entry["Icon"] == "hydraping"
         assert entry["X-GNOME-Autostart-enabled"] == "true"
         assert split_exec(entry["Exec"]) == [str(executable), "gui", "--hidden"]
 

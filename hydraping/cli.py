@@ -11,7 +11,7 @@ from typer.core import TyperGroup
 from hydraping.core.config import Config, create_default_config, get_default_config_path
 from hydraping.core.engine import Engine
 from hydraping.core.models import Endpoint
-from hydraping.gui import INSTALL_HINT, autostart, missing_gui_packages
+from hydraping.gui import INSTALL_HINT, autostart, launcher, missing_gui_packages
 from hydraping.tui.dashboard import Dashboard
 
 DEFAULT_COMMAND = "monitor"
@@ -163,18 +163,44 @@ def gui(
         bool,
         typer.Option(
             "--install-autostart",
-            help="Start 'hydraping gui --hidden' at every login, then exit",
+            help="Start 'hydraping gui --hidden' at every login, add the launcher, then exit",
         ),
     ] = False,
     remove_autostart: Annotated[
         bool,
-        typer.Option("--remove-autostart", help="Stop starting HydraPing at login, then exit"),
+        typer.Option(
+            "--remove-autostart",
+            help="Stop starting HydraPing at login, keep the launcher, then exit",
+        ),
+    ] = False,
+    install_desktop_entry: Annotated[
+        bool,
+        typer.Option(
+            "--install-desktop-entry",
+            help="Add HydraPing with its icon to the desktop's application list, then exit",
+        ),
+    ] = False,
+    remove_desktop_entry: Annotated[
+        bool,
+        typer.Option(
+            "--remove-desktop-entry",
+            help="Remove HydraPing and its icon from the application list, then exit",
+        ),
     ] = False,
 ):
     """Open a desktop window with the live measurements."""
-    if sum([hidden, install_autostart, remove_autostart]) > 1:
+    options = {
+        "--hidden": hidden,
+        "--install-autostart": install_autostart,
+        "--remove-autostart": remove_autostart,
+        "--install-desktop-entry": install_desktop_entry,
+        "--remove-desktop-entry": remove_desktop_entry,
+    }
+    if sum(options.values()) > 1:
+        names = list(options)
         console.print(
-            "[red]Error: use only one of --hidden, --install-autostart and --remove-autostart[/red]"
+            f"[red]Error: use only one of {', '.join(names[:-1])} and {names[-1]}[/red]",
+            soft_wrap=True,
         )
         raise typer.Exit(2)
     if remove_autostart:
@@ -184,19 +210,35 @@ def gui(
         else:
             typer.echo(f"Removed the autostart entry {removed}")
         return
+    if remove_desktop_entry:
+        removed_entry, removed_icon = launcher.remove()
+        if removed_entry is None:
+            typer.echo(f"No launcher to remove at {launcher.entry_path()}")
+        else:
+            typer.echo(f"Removed the launcher {removed_entry}")
+        if removed_icon is None:
+            typer.echo(f"No icon to remove at {launcher.icon_path()}")
+        else:
+            typer.echo(f"Removed the icon {removed_icon}")
+        return
     if missing_gui_packages():
         typer.echo(INSTALL_HINT, err=True)
         raise typer.Exit(1)
     cfg = load_config(config)
-    if install_autostart:
+    if install_desktop_entry or install_autostart:
         try:
             executable = autostart.hydraping_executable()
-            path = autostart.install(executable, config)
+            entry, icon = launcher.install(executable, config)
+            autostart_entry = autostart.install(executable, config) if install_autostart else None
         except OSError as e:
-            console.print(f"[red]Error installing the autostart entry: {e}[/red]")
+            console.print(f"[red]Error installing the desktop entry: {e}[/red]")
             raise typer.Exit(1) from None
-        typer.echo(f"Wrote the autostart entry {path}, which runs at login:")
-        typer.echo(f"  {autostart.exec_line(executable, config)}")
+        typer.echo(f"Wrote the launcher {entry}, which runs:")
+        typer.echo(f"  {autostart.exec_line(executable, config, hidden=False)}")
+        typer.echo(f"Wrote the icon {icon}")
+        if autostart_entry is not None:
+            typer.echo(f"Wrote the autostart entry {autostart_entry}, which runs at login:")
+            typer.echo(f"  {autostart.exec_line(executable, config, hidden=True)}")
         return
     raise typer.Exit(start_gui(cfg, hidden=hidden))
 

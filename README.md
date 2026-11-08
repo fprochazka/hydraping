@@ -58,6 +58,9 @@ hydraping --config /path/to/config.toml
 # Open the desktop window
 hydraping gui
 
+# Add the desktop window to the application list, with its icon
+hydraping gui --install-desktop-entry
+
 # Start the desktop window hidden at every login
 hydraping gui --install-autostart
 ```
@@ -96,6 +99,24 @@ uv tool install 'hydraping[gui]'
 ```
 
 Without it, `hydraping gui` prints that command and exits. The extra pins PySide6 to 6.11, because PySide6 6.12.0 crashes Python 3.11 after a few minutes of use.
+
+#### Application launcher
+
+To start HydraPing from the desktop's application list, like any other app, run:
+
+```bash
+hydraping gui --install-desktop-entry
+```
+
+This writes the launcher `~/.local/share/applications/hydraping.desktop` and the icon `~/.local/share/icons/hicolor/scalable/apps/hydraping.svg`, or the same files under `$XDG_DATA_HOME` when that is set. The launcher runs `hydraping gui` with the absolute path of the `hydraping` command you ran, so install HydraPing with `uv tool install` first. A `--config` given with `--install-desktop-entry` goes into the launcher as an absolute path. The command checks that the configuration loads before it writes anything, and prints the paths it wrote. Run it again after you move HydraPing or the configuration file. When `update-desktop-database` is installed, the command runs it on the applications directory, and when the icon directory already has an icon cache, it updates the cache with `gtk-update-icon-cache`; a failure of either is ignored.
+
+The icon shows four latency bars in the graph colors on a dark tile. The window uses the same icon.
+
+To remove the launcher and the icon, run:
+
+```bash
+hydraping gui --remove-desktop-entry
+```
 
 #### Top bar
 
@@ -144,7 +165,7 @@ To start HydraPing at every login, run:
 hydraping gui --install-autostart
 ```
 
-This writes `~/.config/autostart/hydraping.desktop`, or the same file under `$XDG_CONFIG_HOME` when that is set. The entry runs `hydraping gui --hidden` with the absolute path of the `hydraping` command you ran, so install HydraPing with `uv tool install` first. A `--config` given with `--install-autostart` goes into the entry as an absolute path. The command checks that the configuration loads before it writes the entry. Run it again after you move HydraPing or the configuration file.
+This writes `~/.config/autostart/hydraping.desktop`, or the same file under `$XDG_CONFIG_HOME` when that is set, and also installs the [application launcher](#application-launcher) and its icon, which the autostart entry uses. The entry runs `hydraping gui --hidden` with the absolute path of the `hydraping` command you ran, so install HydraPing with `uv tool install` first. A `--config` given with `--install-autostart` goes into the entry as an absolute path. The command checks that the configuration loads before it writes the entry. Run it again after you move HydraPing or the configuration file.
 
 To stop starting HydraPing at login, run:
 
@@ -152,7 +173,7 @@ To stop starting HydraPing at login, run:
 hydraping gui --remove-autostart
 ```
 
-Both commands print the path of the file they wrote or removed.
+This leaves the launcher in place; `--remove-desktop-entry` removes it. Both commands print the paths of the files they wrote or removed. Only one of the options `--hidden`, `--install-autostart`, `--remove-autostart`, `--install-desktop-entry` and `--remove-desktop-entry` can be given at a time.
 
 ## Configuration
 

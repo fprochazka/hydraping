@@ -18,15 +18,20 @@ _RESERVED = set(" \t\n\"'\\><~|&;$*?#()`")
 _ESCAPED_IN_QUOTES = set('"`$\\')
 
 
-def config_home() -> Path:
-    """Return ``$XDG_CONFIG_HOME``, or ``~/.config`` when it is unset, empty or relative.
+def xdg_home(variable: str, default: str) -> Path:
+    """Return the directory in ``$variable``, or ``~/default`` when it is unset, empty or relative.
 
     The XDG Base Directory spec says to ignore a relative value.
     """
-    value = os.environ.get("XDG_CONFIG_HOME", "")
+    value = os.environ.get(variable, "")
     if value and os.path.isabs(value):
         return Path(value)
-    return Path.home() / ".config"
+    return Path.home() / default
+
+
+def config_home() -> Path:
+    """Return ``$XDG_CONFIG_HOME``, or ``~/.config``."""
+    return xdg_home("XDG_CONFIG_HOME", ".config")
 
 
 def entry_path() -> Path:
@@ -69,9 +74,9 @@ def escape_string_value(value: str) -> str:
     )
 
 
-def exec_line(executable: Path, config: Path | None) -> str:
-    """Return the ``Exec`` value that starts the GUI hidden, with ``config`` if one was given."""
-    arguments = [str(executable), "gui", "--hidden"]
+def exec_line(executable: Path, config: Path | None, *, hidden: bool) -> str:
+    """Return the ``Exec`` value that starts the GUI, with ``config`` if one was given."""
+    arguments = [str(executable), "gui"] + (["--hidden"] if hidden else [])
     if config is not None:
         # The desktop runs the entry from the home directory, not from the current one.
         arguments += ["--config", str(config.absolute())]
@@ -84,8 +89,8 @@ def entry_text(executable: Path, config: Path | None) -> str:
         "Type=Application\n"
         "Name=HydraPing\n"
         "Comment=Show connection latency in the top bar\n"
-        f"Exec={exec_line(executable, config)}\n"
-        "Icon=network-transmit-receive\n"
+        f"Exec={exec_line(executable, config, hidden=True)}\n"
+        "Icon=hydraping\n"
         "Terminal=false\n"
         "X-GNOME-Autostart-enabled=true\n"
     )

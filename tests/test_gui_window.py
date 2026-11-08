@@ -835,3 +835,15 @@ class TestGuiApp:
         ]
         assert tokens == ["token-from-launcher"]
         assert watcher.items == [gui.tray.unique_name]
+
+
+def test_application_icon_loads_from_the_packaged_svg(qapp):
+    icon = gui_app.application_icon()
+
+    assert not icon.isNull()
+    # An SVG icon has no fixed sizes; Qt renders it at the size asked for.
+    image = icon.pixmap(32).toImage()
+    assert (image.width(), image.height()) == (32, 32)
+    # The tallest bar, the right one, is orange.
+    pixel = image.pixelColor(25, 15)
+    assert (pixel.red(), pixel.green(), pixel.blue()) == LATENCY_RGB[LatencyColor.ORANGE]
