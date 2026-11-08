@@ -48,12 +48,23 @@ Repository = "https://github.com/fprochazka/hydraping"
 [project.scripts]
 hydraping = "hydraping.cli:app"
 
+[project.optional-dependencies]
+# PySide6 6.12.0 releases a reference to None on every call that returns nothing. Python 3.11
+# crashes once None's count reaches zero, after a few minutes of the window refreshing; 3.12 and
+# later don't count references to None. Stay on 6.11 while 3.11 is supported.
+gui = [
+    "dbus-fast>=5.2.0,<6",
+    "pyside6-essentials>=6.11.3,<6.12",
+]
+
 [dependency-groups]
 dev = [
     "ruff>=0.14.10,<0.15",
     "pytest>=8.3,<9",
     "pytest-asyncio>=0.24,<0.25",
     "trustme>=1.2.1,<2",
+    "pyside6-essentials>=6.11.3,<6.12",
+    "dbus-fast>=5.2.0,<6",
 ]
 
 [tool.uv]

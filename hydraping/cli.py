@@ -11,6 +11,7 @@ from typer.core import TyperGroup
 from hydraping.core.config import Config, create_default_config, get_default_config_path
 from hydraping.core.engine import Engine
 from hydraping.core.models import Endpoint
+from hydraping.gui import INSTALL_HINT, missing_gui_packages
 from hydraping.tui.dashboard import Dashboard
 
 DEFAULT_COMMAND = "monitor"
@@ -79,6 +80,31 @@ def start_monitoring(cfg: Config) -> None:
         console.print("\n[yellow]Stopped by user[/yellow]")
 
 
+def start_gui(cfg: Config) -> int:
+    """Run the desktop app for ``cfg`` and return its exit code. Tests replace this.
+
+    The GUI is imported here, not at the top, so the CLI works without the ``gui`` extra.
+    """
+    from hydraping.gui.app import run_gui
+
+    return run_gui(cfg)
+
+
+def load_config(config: Path | None) -> Config:
+    """Load ``config``, or the default config file, and exit with a message if that fails."""
+    if config is None:
+        config = get_default_config_path()
+
+    try:
+        return Config.load(config)
+    except FileNotFoundError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1) from None
+    except Exception as e:
+        console.print(f"[red]Error loading configuration: {e}[/red]")
+        raise typer.Exit(1) from None
+
+
 @app.command(name=DEFAULT_COMMAND)
 def monitor(
     endpoints: Annotated[
@@ -100,18 +126,7 @@ def monitor(
     ] = None,
 ):
     """Start monitoring endpoints (default command)."""
-    # Load base configuration
-    if config is None:
-        config = get_default_config_path()
-
-    try:
-        cfg = Config.load(config)
-    except FileNotFoundError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1) from None
-    except Exception as e:
-        console.print(f"[red]Error loading configuration: {e}[/red]")
-        raise typer.Exit(1) from None
+    cfg = load_config(config)
 
     # Endpoints given as arguments replace the configured targets and chains.
     if endpoints:
@@ -123,6 +138,27 @@ def monitor(
             raise typer.Exit(1) from None
 
     start_monitoring(cfg)
+
+
+@app.command()
+def gui(
+    config: Annotated[
+        Path | None,
+        typer.Option(
+            "--config",
+            "-c",
+            help="Path to configuration file",
+            exists=True,
+            dir_okay=False,
+        ),
+    ] = None,
+):
+    """Open a desktop window with the live measurements."""
+    if missing_gui_packages():
+        typer.echo(INSTALL_HINT, err=True)
+        raise typer.Exit(1)
+    cfg = load_config(config)
+    raise typer.Exit(start_gui(cfg))
 
 
 @app.command()

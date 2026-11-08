@@ -7,6 +7,7 @@ Multi-protocol connection tester with live terminal UI - Because it has many "he
 - **Multi-protocol checks**: ICMP ping, DNS resolution, TCP port connectivity, TLS handshake, HTTP/HTTPS requests
 - **Per-layer measurement**: an HTTPS target is measured as DNS, TCP, TLS and HTTP separately, so a failure names the layer that broke
 - **Live terminal UI**: Real-time updating display with latency graphs
+- **Desktop window**: `hydraping gui` shows the same rows in a window, with per-layer graphs
 - **Flexible endpoint support**: Check IPv4/IPv6 addresses, domains, ports, and HTTP endpoints
 - **IPv6 support**: Full support for IPv6 addresses with bracket notation for ports
 - **Configuration file**: Store your endpoints in `~/.config/hydraping/settings.toml`
@@ -53,6 +54,9 @@ hydraping init
 
 # Use custom config file
 hydraping --config /path/to/config.toml
+
+# Open the desktop window
+hydraping gui
 ```
 
 ### Example Output
@@ -77,6 +81,18 @@ The display shows:
 Graph colors: 🟢 Green (<50ms) · 🟡 Yellow (50-100ms) · 🟠 Orange (100-200ms) · 🔴 Red (>200ms)
 
 A failed column shows the letter of the layer that broke: `D` DNS, `T` TCP, `S` TLS, `H` HTTP. ICMP, UDP and Tailscale failures show `!`. When the displayed layer did not run because an earlier one failed, the column shows the earlier layer's letter, and the latency column shows `FAIL (TCP)` with that layer's name.
+
+### Desktop window
+
+`hydraping gui` shows the same rows as the terminal UI in a window: name, latency graph, latency, layer and interface. Click a row to show a small graph for each of its layers, for example DNS, TCP, TLS and HTTP of an HTTPS target. Hover over a graph column to see the time of its bucket, its last result and how many probes in it succeeded or failed. The Problems list appears below the rows when something fails, with the same lines as the terminal UI. The window fits its height to the rows and problems, and you can drag its width. Closing the window quits the app.
+
+The window needs the `gui` extra, which installs PySide6 (Qt):
+
+```bash
+uv tool install 'hydraping[gui]'
+```
+
+Without it, `hydraping gui` prints that command and exits. The extra pins PySide6 to 6.11, because PySide6 6.12.0 crashes Python 3.11 after a few minutes of use.
 
 ## Configuration
 
@@ -306,8 +322,9 @@ All applicable checks still run in the background, and failures are reported in 
   - `dnspython` - DNS queries against configured servers
   - `asyncio` streams and `ssl` from the standard library - TCP connect, TLS handshake and the raw HTTP/1.1 request
   - `Rich` - Terminal UI rendering
+  - `PySide6` (Qt) - Desktop window, optional
   - `Typer` - CLI framework
-- **Probe scheduler**: every check runs on its own schedule; one slow target never delays the others. The engine runs on its own thread, and the terminal UI only reads snapshots of the results
+- **Probe scheduler**: every check runs on its own schedule; one slow target never delays the others. The engine runs on its own thread, and both the terminal UI and the desktop window only read snapshots of the results
 - **Time bucketing**: results land in epoch-aligned buckets by the time they finished, so all rows share column boundaries
 - **Smart filtering**: Only shows meaningful errors based on what checks succeeded
 
