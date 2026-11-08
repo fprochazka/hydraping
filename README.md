@@ -196,7 +196,9 @@ targets = [
 servers = []  # Optional: DNS servers to query instead of the system resolver
 
 [checks]
-probe_interval_seconds = 1.0  # A new probe starts every second
+probe_interval_seconds = 1.0  # A new probe starts every second while the target is fast
+probe_interval_max_seconds = 5.0  # A slow or failing target is probed every 5 seconds at most
+adaptive_interval = true      # false: probe every probe_interval_seconds whatever the speed
 bucket_seconds = 5.0          # One graph column covers 5 seconds
 timeout_seconds = 5.0         # A probe that takes longer counts as failed
 http_success_status_max = 399 # HTTP status codes up to this count as success
@@ -211,6 +213,10 @@ Unknown keys stop the start with an error that names the key, so a typo cannot s
 ### Probe timing
 
 A new probe starts for every check every `probe_interval_seconds`, whether or not the previous one has answered. Each probe gives up after `timeout_seconds`. The graph groups results into columns of `bucket_seconds`; the rightmost column is the one still in progress, and it shows the newest result until its time is over. When a probe finishes, the older probes of the same check that are still running are cancelled, so a slow answer never overwrites a newer one. HydraPing keeps 3600 columns of history per check, five hours at the default width, whatever the terminal size.
+
+Probing slows down while a target is slow or failing, so the probes don't add load to a link that is already strained. Each check keeps a moving average of how long its last few probes took from start to finish, all layers included. An average of 100 ms or less gives `probe_interval_seconds`. From 100 ms to 500 ms the interval rises in a straight line to `probe_interval_max_seconds`, 5 seconds by default. A probe that took longer, or that failed, counts as 500 ms. The newest probe has half the weight in the average, so one lost packet costs one gap of about 2.5 seconds, and three fast probes in a row bring the interval back to `probe_interval_seconds`. Each check adapts on its own: on a strained link every check slows down together, and one slow server slows down alone.
+
+`probe_interval_max_seconds` must be at least `probe_interval_seconds` and at most `bucket_seconds`, so every column still gets a result. When the key is absent, it is 5 seconds or `bucket_seconds`, whichever is shorter. `adaptive_interval = false` turns the slowdown off, and every check probes every `probe_interval_seconds`.
 
 ### Migration from the version 1 format
 

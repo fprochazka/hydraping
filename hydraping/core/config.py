@@ -43,10 +43,18 @@ class ChecksConfig:
     """Probe timing.
 
     Probes start every ``probe_interval_seconds`` and may overlap: a probe that has not answered
-    yet does not hold back the next one. ``bucket_seconds`` is the width of one graph column.
+    yet does not hold back the next one. With ``adaptive_interval``, that is the interval of a fast
+    target; a check whose probes take long or fail slows down to ``probe_interval_max_seconds``.
+    The maximum stays within ``bucket_seconds``, the width of one graph column, so every column
+    gets at least one result. Left unset, it is 5 seconds or the bucket width, whichever is
+    shorter: a file with a short bucket written before the key existed must keep loading.
     """
 
+    DEFAULT_PROBE_INTERVAL_MAX_SECONDS = 5.0
+
     probe_interval_seconds: float = 1.0
+    probe_interval_max_seconds: float | None = None
+    adaptive_interval: bool = True
     bucket_seconds: float = 5.0
     timeout_seconds: float = 5.0
     http_success_status_max: int = 399  # HTTP status codes <= this are considered success
@@ -54,8 +62,35 @@ class ChecksConfig:
     def __post_init__(self):
         for name in ("probe_interval_seconds", "bucket_seconds", "timeout_seconds"):
             value = getattr(self, name)
-            if not isinstance(value, int | float) or isinstance(value, bool) or value <= 0:
+            if not _is_positive_number(value):
                 raise ValueError(f"checks.{name} must be a positive number, got: {value!r}")
+        if self.probe_interval_max_seconds is None:
+            self.probe_interval_max_seconds = min(
+                self.DEFAULT_PROBE_INTERVAL_MAX_SECONDS, self.bucket_seconds
+            )
+        elif not _is_positive_number(self.probe_interval_max_seconds):
+            raise ValueError(
+                "checks.probe_interval_max_seconds must be a positive number, "
+                f"got: {self.probe_interval_max_seconds!r}"
+            )
+        if not isinstance(self.adaptive_interval, bool):
+            raise ValueError(
+                f"checks.adaptive_interval must be true or false, got: {self.adaptive_interval!r}"
+            )
+        if self.probe_interval_max_seconds < self.probe_interval_seconds:
+            raise ValueError(
+                "checks.probe_interval_max_seconds must be at least checks.probe_interval_seconds "
+                f"({self.probe_interval_seconds!r}), got: {self.probe_interval_max_seconds!r}"
+            )
+        if self.probe_interval_max_seconds > self.bucket_seconds:
+            raise ValueError(
+                "checks.probe_interval_max_seconds must be at most checks.bucket_seconds "
+                f"({self.bucket_seconds!r}), got: {self.probe_interval_max_seconds!r}"
+            )
+
+
+def _is_positive_number(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool) and value > 0
 
 
 @dataclass
@@ -159,6 +194,8 @@ class Config:
             probe_interval_seconds=checks_data.get(
                 "probe_interval_seconds", defaults.probe_interval_seconds
             ),
+            probe_interval_max_seconds=checks_data.get("probe_interval_max_seconds"),
+            adaptive_interval=checks_data.get("adaptive_interval", defaults.adaptive_interval),
             bucket_seconds=checks_data.get("bucket_seconds", defaults.bucket_seconds),
             timeout_seconds=checks_data.get("timeout_seconds", defaults.timeout_seconds),
             http_success_status_max=checks_data.get(
@@ -384,6 +421,8 @@ _KNOWN_TABLE_KEYS: dict[str, set[str]] = {
     "dns": {"servers"},
     "checks": {
         "probe_interval_seconds",
+        "probe_interval_max_seconds",
+        "adaptive_interval",
         "bucket_seconds",
         "timeout_seconds",
         "http_success_status_max",
@@ -604,7 +643,16 @@ servers = []
 
 [checks]
 # How often a new probe starts (in seconds). Probes overlap: a slow one does not delay the next.
+# With adaptive_interval, this is the interval while the target is fast.
 probe_interval_seconds = 1.0
+
+# The interval a check slows down to while its probes take long or fail (in seconds), so probing
+# doesn't add load to a strained link. At least probe_interval_seconds, at most bucket_seconds;
+# left out, it is 5.0 or bucket_seconds, whichever is shorter.
+probe_interval_max_seconds = 5.0
+
+# Set to false to probe every probe_interval_seconds whatever the target's speed
+adaptive_interval = true
 
 # Width of one graph column (in seconds). The newest column keeps updating until its time is over.
 bucket_seconds = 5.0

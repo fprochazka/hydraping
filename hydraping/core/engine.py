@@ -16,6 +16,7 @@ from hydraping.core.checkers.icmp import ICMPChecker
 from hydraping.core.checkers.tailscale import TailscaleChecker
 from hydraping.core.checkers.udp import UDPChecker
 from hydraping.core.config import Chain, Config
+from hydraping.core.interval import ProbeDurations, interval_for
 from hydraping.core.models import (
     CHECK_TYPE_PRIORITY,
     CheckResult,
@@ -54,9 +55,14 @@ class ProbeSchedule:
     - A probe that finishes cancels every in-flight probe that started before it. The newest
       measurement is the one worth showing, and a slow older probe must not land on top of it.
 
-    A cancelled probe records nothing. Every measurement a probe returns is stamped with the probe's
-    start and end time and handed to ``on_results`` in one call, so the layers of one probe stay
-    consistent with each other.
+    With ``max_interval`` set, ``interval`` is only the minimum: the schedule slows down to
+    ``max_interval`` while its probes take long or fail, and speeds back up as they get fast again
+    (see :mod:`hydraping.core.interval`). The in-flight cap follows the current interval. Without
+    ``max_interval``, the interval is fixed.
+
+    A cancelled probe records nothing and leaves the interval alone. Every measurement a probe
+    returns is stamped with the probe's start and end time and handed to ``on_results`` in one call,
+    so the layers of one probe stay consistent with each other.
     """
 
     def __init__(
@@ -66,19 +72,28 @@ class ProbeSchedule:
         interval: float,
         timeout: float,
         on_results: OnResults,
+        max_interval: float | None = None,
     ):
         if interval <= 0:
             raise ValueError("interval must be positive")
         if timeout <= 0:
             raise ValueError("timeout must be positive")
+        if max_interval is not None and max_interval < interval:
+            raise ValueError("max_interval must be at least interval")
         self.name = name
         self.probe = probe
+        self.min_interval = interval
+        self.max_interval = interval if max_interval is None else max_interval
         self.interval = interval
         self.timeout = timeout
         self.on_results = on_results
-        self.max_in_flight = math.ceil(timeout / interval) + 1
+        self.durations = ProbeDurations()
         self._in_flight: dict[asyncio.Task, float] = {}
         self.skipped_ticks = 0
+
+    @property
+    def max_in_flight(self) -> int:
+        return math.ceil(self.timeout / self.interval) + 1
 
     @property
     def in_flight(self) -> int:
@@ -131,6 +146,11 @@ class ProbeSchedule:
             for measurement in measurements
         ]
         if results:
+            # A probe with no measurement (ICMP before the name resolved) says nothing about the
+            # target's speed, so it leaves the interval alone.
+            success = all(result.success for result in results)
+            average = self.durations.record(finished_at - started_at, success)
+            self.interval = interval_for(average, self.min_interval, self.max_interval)
             self.on_results(results)
 
 
@@ -209,12 +229,16 @@ class Engine:
     def _schedules_for(self, index: int, endpoint: Endpoint) -> list[ProbeSchedule]:
         def schedule(layers: Sequence[CheckType], probe: Probe, label: str = "") -> ProbeSchedule:
             name = f"{endpoint.display_name} {'+'.join(layer.value for layer in layers)}{label}"
+            checks = self.config.checks
             return ProbeSchedule(
                 name=name,
                 probe=self._guarded(layers, probe),
-                interval=self.config.checks.probe_interval_seconds,
-                timeout=self.config.checks.timeout_seconds,
+                interval=checks.probe_interval_seconds,
+                timeout=checks.timeout_seconds,
                 on_results=lambda results: self.store.apply(index, results),
+                max_interval=(
+                    checks.probe_interval_max_seconds if checks.adaptive_interval else None
+                ),
             )
 
         def chain(target: ConnectionTarget, label: str = "") -> ProbeSchedule:

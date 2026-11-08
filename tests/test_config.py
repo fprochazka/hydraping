@@ -147,6 +147,57 @@ http_success_status_max = 299
         config = Config.load(config_file)
         assert config.checks.http_success_status_max == 299
 
+    def test_load_config_with_adaptive_interval(self, tmp_path):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text("""
+version = 2
+[endpoints]
+targets = ["192.0.2.1"]
+
+[checks]
+probe_interval_seconds = 0.5
+probe_interval_max_seconds = 2.0
+bucket_seconds = 2.0
+adaptive_interval = false
+""")
+
+        checks = Config.load(config_file).checks
+        assert checks.probe_interval_seconds == 0.5
+        assert checks.probe_interval_max_seconds == 2.0
+        assert checks.adaptive_interval is False
+
+    def test_load_config_with_a_short_bucket_shortens_the_default_maximum_interval(self, tmp_path):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text("""
+version = 2
+[endpoints]
+targets = ["192.0.2.1"]
+
+[checks]
+bucket_seconds = 2.0
+""")
+
+        assert Config.load(config_file).checks.probe_interval_max_seconds == 2.0
+
+    def test_load_config_names_the_maximum_interval_that_exceeds_the_bucket(self, tmp_path):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text("""
+version = 2
+[endpoints]
+targets = ["192.0.2.1"]
+
+[checks]
+bucket_seconds = 2.0
+probe_interval_max_seconds = 3.0
+""")
+
+        with pytest.raises(
+            ValueError,
+            match=r"probe_interval_max_seconds must be at most checks.bucket_seconds \(2.0\), "
+            r"got: 3.0",
+        ):
+            Config.load(config_file)
+
     def test_insecure_turns_off_certificate_verification_for_https(self, tmp_path):
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
@@ -369,6 +420,8 @@ class TestConfigClasses:
         """Test ChecksConfig default values."""
         checks = ChecksConfig()
         assert checks.probe_interval_seconds == 1.0
+        assert checks.probe_interval_max_seconds == 5.0
+        assert checks.adaptive_interval is True
         assert checks.bucket_seconds == 5.0
         assert checks.timeout_seconds == 5.0
         assert checks.http_success_status_max == 399
@@ -376,6 +429,36 @@ class TestConfigClasses:
     def test_checks_config_rejects_non_positive_timing(self):
         with pytest.raises(ValueError, match="checks.bucket_seconds must be a positive number"):
             ChecksConfig(bucket_seconds=0)
+        with pytest.raises(
+            ValueError, match="checks.probe_interval_max_seconds must be a positive number"
+        ):
+            ChecksConfig(probe_interval_max_seconds=-1.0)
+
+    def test_checks_config_keeps_the_maximum_interval_between_the_minimum_and_the_bucket(self):
+        with pytest.raises(
+            ValueError,
+            match=r"probe_interval_max_seconds must be at least checks.probe_interval_seconds "
+            r"\(2.0\), got: 1.5",
+        ):
+            ChecksConfig(probe_interval_seconds=2.0, probe_interval_max_seconds=1.5)
+        with pytest.raises(
+            ValueError,
+            match=r"probe_interval_max_seconds must be at most checks.bucket_seconds \(2.0\), "
+            r"got: 5.0",
+        ):
+            ChecksConfig(bucket_seconds=2.0, probe_interval_max_seconds=5.0)
+        assert ChecksConfig(probe_interval_max_seconds=1.0).probe_interval_max_seconds == 1.0
+        assert ChecksConfig(probe_interval_max_seconds=5.0).probe_interval_max_seconds == 5.0
+
+    def test_checks_config_maximum_interval_defaults_to_the_shorter_of_five_and_the_bucket(self):
+        assert ChecksConfig(bucket_seconds=3.0).probe_interval_max_seconds == 3.0
+        assert ChecksConfig(bucket_seconds=30.0).probe_interval_max_seconds == 5.0
+        with pytest.raises(ValueError, match="checks.bucket_seconds must be a positive number"):
+            ChecksConfig(bucket_seconds="5")
+
+    def test_checks_config_adaptive_interval_must_be_a_bool(self):
+        with pytest.raises(ValueError, match="checks.adaptive_interval must be true or false"):
+            ChecksConfig(adaptive_interval="yes")
 
     def test_ui_config_defaults(self):
         """Test UIConfig default values."""

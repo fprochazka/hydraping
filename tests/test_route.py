@@ -157,7 +157,9 @@ class TestEgressInterfaces:
         assert time.monotonic() - started < 2.0
 
 
-FAST_CHECKS = ChecksConfig(probe_interval_seconds=0.05, bucket_seconds=0.5, timeout_seconds=0.5)
+FAST_CHECKS = ChecksConfig(
+    probe_interval_seconds=0.05, adaptive_interval=False, bucket_seconds=0.5, timeout_seconds=0.5
+)
 
 
 class TestEngineInterfaces:

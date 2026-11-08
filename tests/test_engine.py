@@ -48,6 +48,46 @@ class FakeProbe:
         return [ok(float(call)) for _ in range(self.measurements_per_call)]
 
 
+class PhasedProbe:
+    """A probe whose delay depends on the time since ``start()``; ``phases`` are ``(until, delay)``.
+
+    A delay of ``None`` returns a failed measurement at once. ``ticks`` records when each call
+    started, relative to ``start()``.
+    """
+
+    def __init__(self, *phases: tuple[float, float | None]):
+        self.phases = phases
+        self.started_at = 0.0
+        self.ticks: list[float] = []
+        self.cancelled = 0
+
+    def start(self) -> None:
+        self.started_at = time.monotonic()
+
+    async def __call__(self) -> list[Measurement]:
+        elapsed = time.monotonic() - self.started_at
+        self.ticks.append(elapsed)
+        delay = next((delay for until, delay in self.phases if elapsed < until), self.phases[-1][1])
+        if delay is None:
+            return [Measurement(check_type=CheckType.TCP, success=False, error_message="down")]
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            self.cancelled += 1
+            raise
+        return [ok(delay * 1000)]
+
+
+def gaps_within(ticks: list[float], start: float, end: float) -> list[float]:
+    window = [tick for tick in ticks if start <= tick < end]
+    return [b - a for a, b in zip(window, window[1:], strict=False)]
+
+
+def median(values: list[float]) -> float:
+    assert values
+    return sorted(values)[len(values) // 2]
+
+
 async def run_for(seconds: float, *schedules: ProbeSchedule) -> None:
     tasks = [asyncio.ensure_future(schedule.run()) for schedule in schedules]
     await asyncio.sleep(seconds)
@@ -140,8 +180,83 @@ class TestProbeSchedule:
         with pytest.raises(ValueError):
             ProbeSchedule("t", FakeProbe(0.0), 1.0, timeout=0.0, on_results=lambda r: None)
 
+    def test_rejects_a_maximum_interval_below_the_interval(self):
+        with pytest.raises(ValueError, match="max_interval"):
+            ProbeSchedule(
+                "t", FakeProbe(0.0), 1.0, timeout=1.0, on_results=lambda r: None, max_interval=0.5
+            )
 
-FAST_CHECKS = ChecksConfig(probe_interval_seconds=0.05, bucket_seconds=0.5, timeout_seconds=1.0)
+    async def test_interval_follows_the_probe_duration_fast_slow_fast(self):
+        """Ticks come every MIN while probes are fast, stretch to MAX while they take long, and come
+        back to MIN once the probes are fast again. The slow probes still in flight when the first
+        fast one lands are cancelled and don't hold the average up."""
+        minimum, maximum = 0.05, 0.25
+        # Fast until 0.6 s, then each probe takes half a second (the slow mark), fast again from
+        # 2.5 s. The slow phase is long enough for the moving average to settle near the maximum.
+        probe = PhasedProbe((0.6, 0.001), (2.5, 0.5), (99.0, 0.001))
+        results: list[CheckResult] = []
+        schedule = ProbeSchedule(
+            "t", probe, minimum, timeout=1.0, on_results=results.extend, max_interval=maximum
+        )
+        assert schedule.interval == minimum
+        probe.start()
+        task = asyncio.ensure_future(schedule.run())
+        try:
+            await asyncio.sleep(0.6)
+            assert schedule.interval == minimum
+            await asyncio.sleep(1.9)
+            assert schedule.interval > 0.2, "slow probes stretched the interval towards 0.25 s"
+            await asyncio.sleep(1.0)
+            assert schedule.interval == minimum, "fast probes brought the interval back"
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        assert median(gaps_within(probe.ticks, 0.0, 0.6)) < 0.1
+        # The first slow result lands at 1.1 s and the third, which takes the interval past 0.2 s,
+        # at 1.2 s; the ticks from 1.5 s on are spaced by that interval, and asyncio never fires
+        # early. The window is wide enough to hold several ticks even on a loaded machine.
+        slow_gaps = gaps_within(probe.ticks, 1.5, 2.5)
+        assert len(slow_gaps) >= 2, probe.ticks
+        assert min(slow_gaps) >= 0.2
+        assert median(gaps_within(probe.ticks, 3.0, 3.5)) < 0.1
+        assert probe.cancelled > 0, "the first fast probe cancelled the slow ones in flight"
+        assert all(r.latency_ms != 500.0 for r in results[-5:]), "the last results are fast"
+
+    async def test_failures_stretch_the_interval_and_the_in_flight_cap_follows(self):
+        probe = PhasedProbe((99.0, None))
+        schedule = ProbeSchedule(
+            "t", probe, INTERVAL, timeout=1.0, on_results=lambda r: None, max_interval=0.25
+        )
+        assert schedule.max_in_flight == 21
+        probe.start()
+
+        await run_for(1.5, schedule)
+
+        assert schedule.interval > 0.24
+        # ceil(1.0 / 0.25) + 1 is 5; the average approaches the slow mark from below, so the
+        # interval sits just under 0.25 s and the cap is 6 until it gets there.
+        assert schedule.max_in_flight in (5, 6)
+        assert min(gaps_within(probe.ticks, 0.8, 1.5)) >= 0.2
+
+    async def test_without_a_maximum_the_interval_is_fixed(self):
+        probe = PhasedProbe((99.0, None))
+        schedule = ProbeSchedule("t", probe, INTERVAL, timeout=1.0, on_results=lambda r: None)
+        probe.start()
+
+        await run_for(INTERVAL * 10, schedule)
+
+        assert schedule.interval == INTERVAL
+        assert schedule.max_in_flight == 21
+        assert len(probe.ticks) >= 8, "failures did not slow the ticks down"
+        assert median(gaps_within(probe.ticks, 0.0, 99.0)) < INTERVAL * 2
+
+
+# A fixed interval: these tests count probes against the clock. The adaptive interval has its own
+# tests in TestProbeSchedule.
+FAST_CHECKS = ChecksConfig(
+    probe_interval_seconds=0.05, adaptive_interval=False, bucket_seconds=0.5, timeout_seconds=1.0
+)
 
 
 def listening_socket() -> socket.socket:
