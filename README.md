@@ -7,7 +7,7 @@ Multi-protocol connection tester with live terminal UI - Because it has many "he
 - **Multi-protocol checks**: ICMP ping, DNS resolution, TCP port connectivity, TLS handshake, HTTP/HTTPS requests
 - **Per-layer measurement**: an HTTPS target is measured as DNS, TCP, TLS and HTTP separately, so a failure names the layer that broke
 - **Live terminal UI**: Real-time updating display with latency graphs
-- **Desktop window**: `hydraping gui` shows the same rows in a window, with per-layer graphs
+- **Desktop window**: `hydraping gui` shows the same rows in a window, with per-layer graphs, and the latency in the top bar
 - **Flexible endpoint support**: Check IPv4/IPv6 addresses, domains, ports, and HTTP endpoints
 - **IPv6 support**: Full support for IPv6 addresses with bracket notation for ports
 - **Configuration file**: Store your endpoints in `~/.config/hydraping/settings.toml`
@@ -84,15 +84,46 @@ A failed column shows the letter of the layer that broke: `D` DNS, `T` TCP, `S` 
 
 ### Desktop window
 
-`hydraping gui` shows the same rows as the terminal UI in a window: name, latency graph, latency, layer and interface. Click a row to show a small graph for each of its layers, for example DNS, TCP, TLS and HTTP of an HTTPS target. Hover over a graph column to see the time of its bucket, its last result and how many probes in it succeeded or failed. The Problems list appears below the rows when something fails, with the same lines as the terminal UI. The window fits its height to the rows and problems, and you can drag its width. Closing the window quits the app.
+`hydraping gui` shows the same rows as the terminal UI in a window: name, latency graph, latency, layer and interface. Click a row to show a small graph for each of its layers, for example DNS, TCP, TLS and HTTP of an HTTPS target. Hover over a graph column to see the time of its bucket, its last result and how many probes in it succeeded or failed. The Problems list appears below the rows when something fails, with the same lines as the terminal UI. The window fits its height to the rows and problems, and you can drag its width.
 
-The window needs the `gui` extra, which installs PySide6 (Qt):
+The window needs the `gui` extra, which installs PySide6 (Qt) and dbus-fast:
 
 ```bash
 uv tool install 'hydraping[gui]'
 ```
 
 Without it, `hydraping gui` prints that command and exits. The extra pins PySide6 to 6.11, because PySide6 6.12.0 crashes Python 3.11 after a few minutes of use.
+
+#### Top bar
+
+`hydraping gui` also puts an item in the top bar, next to the clock and the system menu. The icon has one bar per chain and per target, up to five, in the graph colors: the taller and redder the bar, the slower the target. A target or chain that is down gets a red bar of full height, and grey bars mean no result yet. Next to the icon, a label shows the most important fact:
+
+- `Jumpbox down` when a chain is broken, with the name of the broken hop;
+- `2 down` when targets outside chains fail;
+- `38 ms`, the slowest latency, when everything works;
+- `…` before the first result.
+
+The top-bar item updates every `tray_refresh_seconds`, 5 by default, so it doesn't flicker. The window keeps updating twice a second.
+
+Each chain counts as one item, with the latency of its last hop and the color of its slowest hop. Targets count too, unless they have `tray = false`:
+
+```toml
+[endpoints]
+targets = [
+    { url = "192.0.2.1", name = "Printer", tray = false },
+]
+```
+
+In Ubuntu's top bar, a click on the icon opens a menu with Open HydraPing and Quit, and a double click opens the window. While the item is in the top bar, closing the window only hides it; Quit in the menu stops HydraPing. Ctrl+C in the terminal stops it too.
+
+Known limits:
+
+- The item needs a desktop that shows StatusNotifierItems. Ubuntu does, through its AppIndicator extension, which is on by default. Plain GNOME without that extension shows nothing. Then HydraPing prints a line saying so, and closing the window quits HydraPing.
+- The label is an Ayatana extension of the protocol. Ubuntu's top bar shows it; other desktops may show only the icon.
+- The tooltip lists one line per item, but Ubuntu's top bar doesn't show tooltips.
+- On Wayland, the window can't open under the icon: the desktop decides where it goes.
+- On Wayland, Open HydraPing in the menu may not bring a window that is already open to the front, because the desktop sends no activation token with a menu click. A double click on the icon sends one.
+- Running `hydraping` and `hydraping gui` at the same time probes every target twice.
 
 ## Configuration
 
@@ -127,6 +158,9 @@ targets = [
 
     # Accept any certificate (self-signed devices); the TLS layer still measures the handshake
     { url = "https://router.example.internal/", insecure = true, name = "Router admin" },
+
+    # Leave a target out of the desktop top bar; it still shows in the window and the terminal UI
+    { url = "192.0.2.1", tray = false, name = "Printer" },
 ]
 
 [dns]
@@ -139,7 +173,8 @@ timeout_seconds = 5.0         # A probe that takes longer counts as failed
 http_success_status_max = 399 # HTTP status codes up to this count as success
 
 [ui]
-graph_width = 0  # Auto-size to terminal width
+graph_width = 0             # Auto-size to terminal width
+tray_refresh_seconds = 5.0  # The hydraping gui top-bar item updates at most this often
 ```
 
 Unknown keys stop the start with an error that names the key, so a typo cannot silently fall back to a default.
@@ -171,6 +206,7 @@ Supported endpoint formats:
 - **IPv4/IPv6 preference**: `{ url = "google.com", ip_version = 4 }` → Force IPv4 or IPv6
 - **Custom primary check**: `{ url = "example.com", primary_check_type = "tcp" }` → Choose which check to display (dns/icmp/tcp/udp/tls/http)
 - **Any certificate**: `{ url = "https://router.example.internal/", insecure = true }` → Skip certificate verification in the TLS layer (HTTPS only)
+- **Not in the top bar**: `{ url = "192.0.2.1", tray = false }` → Leave the target out of the `hydraping gui` top-bar item; not allowed on chain hops, which count as their chain
 - **DNS resolver**: `{ url = "192.0.2.53", check = "dns", query = "example.com" }` → ICMP + a query for a random name under the zone; see [DNS resolver hops](#dns-resolver-hops)
 - **Tailscale peer**: `{ url = "jumpbox", check = "tailscale" }` → `tailscale ping` latency and whether the path is direct or relayed; see [Tailscale hops](#tailscale-hops)
 
@@ -189,7 +225,7 @@ hops = [
 ]
 ```
 
-Hops take the same formats and keys as `targets`, and each hop is measured like a target. The dashboard shows the chain as a header row with its hops indented below it.
+Hops take the same formats and keys as `targets`, except `tray`, and each hop is measured like a target. The dashboard shows the chain as a header row with its hops indented below it.
 
 The chain is broken at the first hop whose displayed check failed in the current graph column, or in the column just before it while the current one has no result yet. The problems section then shows one line for the chain, for example `Company: broken at Jumpbox (TCP: Connection refused on port 22); Router, Internet OK`. The hops after the broken one keep being probed, so a recovery shows up right away, but their own problem lines are left out, because they fail with the broken hop. The diagnosis stops at a hop that has no result yet, for example while its first probe is still running: the hops after it are not judged until it answers, so the chain's status stays empty unless a hop before it is broken.
 
@@ -323,6 +359,7 @@ All applicable checks still run in the background, and failures are reported in 
   - `asyncio` streams and `ssl` from the standard library - TCP connect, TLS handshake and the raw HTTP/1.1 request
   - `Rich` - Terminal UI rendering
   - `PySide6` (Qt) - Desktop window, optional
+  - `dbus-fast` - Top-bar item over D-Bus, optional
   - `Typer` - CLI framework
 - **Probe scheduler**: every check runs on its own schedule; one slow target never delays the others. The engine runs on its own thread, and both the terminal UI and the desktop window only read snapshots of the results
 - **Time bucketing**: results land in epoch-aligned buckets by the time they finished, so all rows share column boundaries

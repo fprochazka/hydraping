@@ -60,9 +60,19 @@ class ChecksConfig:
 
 @dataclass
 class UIConfig:
-    """UI display configuration."""
+    """UI display configuration.
+
+    ``tray_refresh_seconds`` is how often ``hydraping gui`` updates its top-bar item at most; a
+    label and icon that change with every probe would flicker.
+    """
 
     graph_width: int = 0  # 0 means auto-size to terminal width
+    tray_refresh_seconds: float = 5.0
+
+    def __post_init__(self):
+        value = self.tray_refresh_seconds
+        if not isinstance(value, int | float) or isinstance(value, bool) or value <= 0:
+            raise ValueError(f"ui.tray_refresh_seconds must be a positive number, got: {value!r}")
 
 
 @dataclass
@@ -130,7 +140,10 @@ class Config:
         endpoint_configs = data.get("endpoints", {}).get("targets", [])
         endpoints = [_parse_endpoint(ep_config) for ep_config in endpoint_configs]
         chains = [
-            Chain(name=chain["name"], hops=[_parse_endpoint(hop) for hop in chain["hops"]])
+            Chain(
+                name=chain["name"],
+                hops=[_parse_endpoint(hop, in_chain=True) for hop in chain["hops"]],
+            )
             for chain in data.get("chains", [])
         ]
         if not endpoints and not chains:
@@ -155,7 +168,13 @@ class Config:
 
         # Parse UI config
         ui_data = data.get("ui", {})
-        ui = UIConfig(graph_width=ui_data.get("graph_width", 0))
+        ui_defaults = UIConfig()
+        ui = UIConfig(
+            graph_width=ui_data.get("graph_width", ui_defaults.graph_width),
+            tray_refresh_seconds=ui_data.get(
+                "tray_refresh_seconds", ui_defaults.tray_refresh_seconds
+            ),
+        )
 
         return Config(endpoints=endpoints, dns=dns, checks=checks, ui=ui, chains=chains)
 
@@ -224,8 +243,8 @@ def _parse_tailscale_endpoint(ep_config: dict, url: str) -> TailscalePeerEndpoin
     return TailscalePeerEndpoint(raw=url, peer=url)
 
 
-def _parse_endpoint(ep_config: object) -> Endpoint:
-    """Parse one entry of ``endpoints.targets`` or of a chain's ``hops``."""
+def _parse_endpoint(ep_config: object, in_chain: bool = False) -> Endpoint:
+    """Parse one entry of ``endpoints.targets``, or of a chain's ``hops`` when ``in_chain``."""
     if isinstance(ep_config, str):
         # Simple string format - use URL as display name
         endpoint = Endpoint.parse(ep_config)
@@ -340,6 +359,17 @@ def _parse_endpoint(ep_config: object) -> Endpoint:
                 )
             endpoint.insecure = True
 
+        if "tray" in ep_config:
+            tray = ep_config["tray"]
+            if not isinstance(tray, bool):
+                raise ValueError(f"tray must be true or false for {url}, got: {tray!r}")
+            if in_chain:
+                raise ValueError(
+                    f"tray has no effect on the chain hop {url}: the top bar shows each chain "
+                    "as a whole"
+                )
+            endpoint.tray = tray
+
     else:
         raise ValueError(
             f"Invalid endpoint format: {ep_config}. Expected string or object with 'url' field."
@@ -358,7 +388,7 @@ _KNOWN_TABLE_KEYS: dict[str, set[str]] = {
         "timeout_seconds",
         "http_success_status_max",
     },
-    "ui": {"graph_width"},
+    "ui": {"graph_width", "tray_refresh_seconds"},
 }
 # Top-level keys that are values, not tables. ``chains`` is an array of tables, checked on its own.
 _KNOWN_TOP_LEVEL_VALUES = {"version", "chains"}
@@ -370,6 +400,7 @@ _KNOWN_ENDPOINT_KEYS = {
     "ip_version",
     "primary_check_type",
     "insecure",
+    "tray",
     "probe_hex",
     "probe_ascii",
     "check",
@@ -527,6 +558,7 @@ version = 2
 #   - IPv4/IPv6 preference: { url = "google.com", ip_version = 4, name = "Google (IPv4)" }
 #   - Primary check type: { url = "example.com", primary_check_type = "tcp" }
 #   - Accept any certificate: { url = "https://router.example.internal/", insecure = true }
+#   - Leave out of the hydraping gui top bar: { url = "192.0.2.1", tray = false }
 #   - DNS resolver path: { url = "192.0.2.53", check = "dns", query = "example.com" }
 #     asks the server for a random, uncacheable name under the zone on every probe
 #
@@ -589,6 +621,9 @@ http_success_status_max = 399
 # Width of the latency graph (in characters)
 # Set to 0 to auto-size based on terminal width
 graph_width = 0
+
+# How often the hydraping gui top-bar item updates at most (in seconds), so it doesn't flicker
+# tray_refresh_seconds = 5.0
 """
 
     config_path.write_text(default_config)

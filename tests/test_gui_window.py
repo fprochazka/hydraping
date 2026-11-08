@@ -1,25 +1,31 @@
 """Tests for the desktop window, on Qt's offscreen platform, from synthetic engine snapshots."""
 
+import asyncio
 import os
 import socket
 import sys
+import time
 from dataclasses import replace
+from itertools import pairwise
 
 import pytest
+from dbus_fast import Variant
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QSplitter, QWidget
 
-from hydraping.core.config import ChecksConfig, Config
+from hydraping.core.config import ChecksConfig, Config, UIConfig
 from hydraping.core.display import ICMP_UNAVAILABLE
 from hydraping.core.graphcells import LatencyColor, classify_cells
 from hydraping.core.models import CheckResult, CheckType, Endpoint, LayerKey, Measurement
 from hydraping.core.snapshot import ChainSnapshot, EndpointSnapshot, EngineSnapshot, LayerView
 from hydraping.core.store import Bucket
+from hydraping.gui import dbusmenu
 from hydraping.gui.app import GuiApp
 from hydraping.gui.colors import LATENCY_RGB
 from hydraping.gui.graph_widget import CELL_WIDTH, GraphWidget, bucket_tooltip
 from hydraping.gui.window import INDENT, SCREEN_MARGIN, MainWindow
+from tests.dbus_helpers import LoopThread, connect, disconnect, start_watcher
 
 BUCKET = 5.0
 # A bucket boundary; the snapshots below are taken in the bucket that starts here.
@@ -493,7 +499,8 @@ class TestBucketTooltip:
 
 
 class TestGuiApp:
-    def test_shows_live_results_and_stops_the_engine_when_the_window_closes(self, qapp, deadline):
+    def test_without_a_top_bar_host_closing_the_window_quits(self, qapp, deadline):
+        # The tests' session bus doesn't exist (see conftest), so no host shows the item.
         # A listening socket accepts TCP connections in the kernel, without an accept() loop.
         with socket.socket() as server:
             server.bind(("127.0.0.1", 0))
@@ -525,3 +532,106 @@ class TestGuiApp:
         assert exit_code == 0
         assert seen == [f"(TCP:{port})"]
         assert gui.engine._thread is None
+        assert not gui.tray.registered
+
+    def test_with_a_top_bar_host_closing_hides_and_quit_in_the_menu_quits(
+        self, qapp, private_bus, deadline
+    ):
+        loop = LoopThread()
+        watcher_bus, watcher = loop.run(start_watcher(private_bus))
+        client = loop.run(connect(private_bus))
+        config = Config(
+            endpoints=[Endpoint.parse("192.0.2.1")],
+            checks=ChecksConfig(probe_interval_seconds=0.1, timeout_seconds=1.0),
+        )
+        gui = GuiApp(config, qapp, bus_address=private_bus)
+        steps: list[str] = []
+
+        async def click_quit():
+            node = await client.introspect(gui.tray.unique_name, dbusmenu.OBJECT_PATH)
+            menu = client.get_proxy_object(
+                gui.tray.unique_name, dbusmenu.OBJECT_PATH, node
+            ).get_interface(dbusmenu.INTERFACE)
+            await menu.call_event(2, "clicked", Variant("s", ""), 0)
+
+        def step():
+            if not steps and gui.window.isVisible() and gui.window.hide_on_close:
+                gui.window.close()
+                steps.append("closed")
+            elif steps == ["closed"]:
+                steps.append("hidden" if gui.window.isHidden() else "visible")
+                # Quit arrives from the D-Bus thread; don't block Qt's thread on it.
+                asyncio.run_coroutine_threadsafe(click_quit(), loop.loop)
+
+        poll = QTimer()
+        poll.setInterval(50)
+        poll.timeout.connect(step)
+        poll.start()
+        deadline(10_000)
+        try:
+            exit_code = gui.run()
+        finally:
+            poll.stop()
+            loop.run(disconnect(client))
+            loop.run(disconnect(watcher_bus))
+            loop.close()
+
+        assert exit_code == 0
+        assert steps == ["closed", "hidden"]
+        assert watcher.items == [gui.tray.unique_name]
+        assert gui.engine._thread is None
+
+    def test_top_bar_item_updates_at_most_every_tray_refresh_seconds(
+        self, qapp, private_bus, deadline
+    ):
+        tray_refresh_seconds = 0.5
+        loop = LoopThread()
+        watcher_bus, watcher = loop.run(start_watcher(private_bus))
+        # A listening socket accepts TCP connections in the kernel, so every probe of it succeeds
+        # with a slightly different latency, and every window refresh has a new snapshot.
+        with socket.socket() as server:
+            server.bind(("127.0.0.1", 0))
+            server.listen(128)
+            config = Config(
+                endpoints=[Endpoint.parse(f"127.0.0.1:{server.getsockname()[1]}")],
+                checks=ChecksConfig(probe_interval_seconds=0.05, timeout_seconds=1.0),
+                ui=UIConfig(tray_refresh_seconds=tray_refresh_seconds),
+            )
+            gui = GuiApp(config, qapp, bus_address=private_bus)
+            gui.timer.setInterval(50)
+            refreshed_at: list[float] = []
+            tray_updated_at: list[float] = []
+            show_snapshot, update = gui.window.show_snapshot, gui.tray.update
+
+            def recording_show_snapshot(snapshot):
+                refreshed_at.append(time.monotonic())
+                show_snapshot(snapshot)
+
+            def recording_update(status):
+                tray_updated_at.append(time.monotonic())
+                update(status)
+
+            gui.window.show_snapshot = recording_show_snapshot
+            gui.tray.update = recording_update
+            stop = QTimer()
+            stop.setSingleShot(True)
+            stop.timeout.connect(gui.quit)
+            stop.start(2_000)
+            deadline(10_000)
+            started = time.monotonic()
+            try:
+                exit_code = gui.run()
+            finally:
+                stop.stop()
+                loop.run(disconnect(watcher_bus))
+                loop.close()
+            elapsed = time.monotonic() - started
+
+        assert exit_code == 0
+        assert watcher.items == [gui.tray.unique_name]
+        # The window kept refreshing every 50 ms, the top-bar item only every 0.5 s.
+        assert len(refreshed_at) >= 15
+        assert tray_updated_at[0] - started < 0.2, "the first update must not wait"
+        gaps = [later - earlier for earlier, later in pairwise(tray_updated_at)]
+        assert min(gaps) >= tray_refresh_seconds - 0.01
+        assert 3 <= len(tray_updated_at) <= elapsed / tray_refresh_seconds + 1

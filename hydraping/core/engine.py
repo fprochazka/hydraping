@@ -192,10 +192,13 @@ class Engine:
     def _measured_index(self, endpoint: Endpoint) -> int:
         """Return the store index of ``endpoint``, adding it when nothing measures it yet."""
 
-        # The name and primary layer only change how a place shows the endpoint, and each place
-        # takes them from its own endpoint, so they don't make it a different measurement.
+        # The name, the primary layer and the tray flag only change how a place shows the endpoint,
+        # and each place takes them from its own endpoint, so they don't make it a different
+        # measurement.
         def key(endpoint: Endpoint) -> Endpoint:
-            return dataclasses.replace(endpoint, custom_name=None, primary_check_type=None)
+            return dataclasses.replace(
+                endpoint, custom_name=None, primary_check_type=None, tray=True
+            )
 
         for index, measured in enumerate(self.measured):
             if key(measured) == key(endpoint):

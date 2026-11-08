@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFontMetrics, QMouseEvent, QResizeEvent, QShowEvent
+from PySide6.QtGui import QCloseEvent, QFontMetrics, QMouseEvent, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -275,10 +275,15 @@ class MainWindow(QMainWindow):
 
     The window never reads the engine. Its owner passes each snapshot to ``show_snapshot``.
     Its height follows the content, up to the screen's height, and only its width can be dragged.
+    While ``hide_on_close`` is set, closing the window only hides it. Otherwise it closes and
+    sends ``closed``.
     """
+
+    closed = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self.hide_on_close = False
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(DEFAULT_WIDTH, self.height())
         self._fitted_height: int | None = None
@@ -369,6 +374,14 @@ class MainWindow(QMainWindow):
             handle.screenChanged.connect(lambda _screen: self.fit_height())
             self._screen_connected = True
         self.fit_height()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self.hide_on_close:
+            event.ignore()
+            self.hide()
+            return
+        super().closeEvent(event)
+        self.closed.emit()
 
     def graph_columns(self) -> int:
         """Return how many buckets a snapshot needs so the widest graph is full."""

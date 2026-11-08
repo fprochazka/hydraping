@@ -9,7 +9,7 @@ import importlib.util
 INSTALL_HINT = "Install the GUI with: uv tool install 'hydraping[gui]'"
 
 # The import names of the packages that the ``gui`` extra installs.
-GUI_PACKAGES = ("PySide6",)
+GUI_PACKAGES = ("PySide6", "dbus_fast")
 
 
 def missing_gui_packages() -> list[str]:

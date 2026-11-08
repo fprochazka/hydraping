@@ -1,55 +1,132 @@
-"""The desktop app: Qt in the main thread, the engine in its own thread, snapshots in between."""
+"""The desktop app: Qt in the main thread, the engine and the top-bar item in their own threads."""
 
+import os
 import signal
 import sys
+import time
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from hydraping.core.config import Config
 from hydraping.core.engine import Engine
+from hydraping.gui.tray import TrayService, print_unavailable
+from hydraping.gui.tray_status import tray_status
 from hydraping.gui.window import WINDOW_TITLE, MainWindow
 
-# How often the window reads a snapshot from the engine.
+# How often the window reads a snapshot from the engine. The top-bar item gets one of these
+# snapshots at most every ``ui.tray_refresh_seconds``.
 REFRESH_MILLISECONDS = 500
 
 
+class _TrayBridge(QObject):
+    """Carry the top-bar item's callbacks from the D-Bus thread to Qt's thread.
+
+    The D-Bus thread only emits these signals. Their queued connections run the slots in Qt's
+    thread, so no Qt widget is touched from the D-Bus thread.
+    """
+
+    open_requested = Signal(str)
+    quit_requested = Signal()
+    registered_changed = Signal(bool)
+
+
 class GuiApp:
-    """Run the engine and show its snapshots in a ``MainWindow``.
+    """Run the engine and show its snapshots in a ``MainWindow`` and in the top bar.
 
     Qt owns the main thread. The engine probes on its own thread, and a ``QTimer`` reads a
     snapshot every ``REFRESH_MILLISECONDS``, so Qt code never touches the engine's state, only the
-    immutable snapshots. Closing the window quits the app.
+    immutable snapshots. The top-bar item runs on a third thread and gets plain status values,
+    at most once per ``ui.tray_refresh_seconds``, because a label and an icon that change with
+    every probe flicker. The first refresh updates it at once.
+
+    While a host shows the top-bar item, closing the window hides it, and Quit is in the item's
+    menu. Without a host, closing the window quits the app. ``bus_address`` picks the D-Bus
+    session bus; None means the one of the user's session.
     """
 
-    def __init__(self, config: Config, qt_app: QApplication):
+    def __init__(self, config: Config, qt_app: QApplication, bus_address: str | None = None):
         self.qt_app = qt_app
         self.engine = Engine(config)
+        self.tray_refresh_seconds = config.ui.tray_refresh_seconds
+        self._tray_updated_at: float | None = None
         self.window = MainWindow()
+        self.window.closed.connect(self.quit)
         self.timer = QTimer()
         self.timer.setInterval(REFRESH_MILLISECONDS)
         self.timer.timeout.connect(self.refresh)
 
+        self._bridge = _TrayBridge()
+        queued = Qt.ConnectionType.QueuedConnection
+        self._bridge.open_requested.connect(self.open_window, queued)
+        self._bridge.quit_requested.connect(self.quit, queued)
+        self._bridge.registered_changed.connect(self._on_tray_registered, queued)
+        self.tray = TrayService(
+            on_activate=lambda token: self._bridge.open_requested.emit(token or ""),
+            on_quit=self._bridge.quit_requested.emit,
+            on_registered=self._bridge.registered_changed.emit,
+            bus_address=bus_address,
+        )
+
     def refresh(self) -> None:
-        self.window.show_snapshot(self.engine.snapshot(columns=self.window.graph_columns()))
+        snapshot = self.engine.snapshot(columns=self.window.graph_columns())
+        self.window.show_snapshot(snapshot)
+        now = time.monotonic()
+        if (
+            self._tray_updated_at is None
+            or now - self._tray_updated_at >= self.tray_refresh_seconds
+        ):
+            self._tray_updated_at = now
+            self.tray.update(tray_status(snapshot))
+
+    def open_window(self, activation_token: str = "") -> None:
+        """Show the window and ask the desktop to bring it to the front."""
+        if activation_token and QGuiApplication.platformName() == "wayland":
+            # Qt's Wayland shell takes the token from this variable when it activates a window.
+            # Without one, the desktop may leave the window behind the others.
+            os.environ["XDG_ACTIVATION_TOKEN"] = activation_token
+        if self.window.isMinimized():
+            self.window.showNormal()
+        else:
+            self.window.show()
+        self.window.raise_()
+        self.window.activateWindow()
+
+    def quit(self) -> None:
+        self.qt_app.quit()
+
+    def _on_tray_registered(self, registered: bool) -> None:
+        self.window.hide_on_close = registered
 
     def run(self) -> int:
-        """Show the window and run Qt's event loop until the window closes or Ctrl+C.
+        """Show the window and run Qt's event loop until Quit, Ctrl+C, or closing the window
+        while no top-bar item is shown.
 
-        Returns the event loop's exit code. The engine stops on every way out.
+        Returns the event loop's exit code. The engine and the top-bar item stop on every way out.
         """
         # Qt's event loop doesn't run Python signal handlers by itself. The refresh timer wakes the
         # interpreter twice a second, which is when a Ctrl+C in the terminal gets handled.
-        previous_handler = signal.signal(signal.SIGINT, lambda *_: self.qt_app.quit())
+        previous_handler = signal.signal(signal.SIGINT, lambda *_: self.quit())
+        # The top-bar item replaces the window as the way to quit.
+        previous_quit_on_close = self.qt_app.quitOnLastWindowClosed()
+        self.qt_app.setQuitOnLastWindowClosed(False)
         try:
             self.engine.start()
+            self.tray.start()
+            if not self.tray.registered:
+                print_unavailable(self.tray)
+            # The callback may still be queued; the window must know before it can be closed.
+            self.window.hide_on_close = self.tray.registered
             self.refresh()
             self.window.show()
             self.timer.start()
             return self.qt_app.exec()
         finally:
             signal.signal(signal.SIGINT, previous_handler)
+            self.qt_app.setQuitOnLastWindowClosed(previous_quit_on_close)
             self.timer.stop()
+            self.tray.stop()
             self.engine.stop()
 
 

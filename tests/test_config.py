@@ -175,6 +175,58 @@ targets = [{ url = "http://example.com/", insecure = true }]
         with pytest.raises(ValueError, match="only https:// endpoints have a TLS layer"):
             Config.load(config_file)
 
+    def _load_ui(self, tmp_path, ui_body: str) -> UIConfig:
+        config_file = tmp_path / "test.toml"
+        config_file.write_text(
+            f'version = 2\n[endpoints]\ntargets = ["192.0.2.1"]\n[ui]\n{ui_body}\n'
+        )
+        return Config.load(config_file).ui
+
+    def test_tray_refresh_seconds_defaults_to_five(self, tmp_path):
+        assert self._load_ui(tmp_path, "graph_width = 0").tray_refresh_seconds == 5.0
+
+    def test_tray_refresh_seconds_custom(self, tmp_path):
+        assert self._load_ui(tmp_path, "tray_refresh_seconds = 2.5").tray_refresh_seconds == 2.5
+
+    @pytest.mark.parametrize("value", ["0", "-1.0", '"5"', "true"])
+    def test_tray_refresh_seconds_must_be_a_positive_number(self, tmp_path, value):
+        with pytest.raises(
+            ValueError, match="ui.tray_refresh_seconds must be a positive number, got: "
+        ):
+            self._load_ui(tmp_path, f"tray_refresh_seconds = {value}")
+
+    def test_tray_leaves_a_target_out_of_the_top_bar(self, tmp_path):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text("""
+version = 2
+[endpoints]
+targets = [{ url = "192.0.2.1", tray = false }, "192.0.2.2"]
+""")
+        hidden, shown = Config.load(config_file).endpoints
+        assert hidden.tray is False
+        assert shown.tray is True
+
+    def test_tray_must_be_a_bool(self, tmp_path):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text("""
+version = 2
+[endpoints]
+targets = [{ url = "192.0.2.1", tray = "no" }]
+""")
+        with pytest.raises(ValueError, match="tray must be true or false"):
+            Config.load(config_file)
+
+    def test_tray_on_a_chain_hop_is_an_error(self, tmp_path):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text("""
+version = 2
+[[chains]]
+name = "Company"
+hops = [{ url = "192.0.2.1", tray = false }]
+""")
+        with pytest.raises(ValueError, match="tray has no effect on the chain hop 192.0.2.1"):
+            Config.load(config_file)
+
     def test_insecure_must_be_a_bool(self, tmp_path):
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
@@ -329,6 +381,7 @@ class TestConfigClasses:
         """Test UIConfig default values."""
         ui = UIConfig()
         assert ui.graph_width == 0
+        assert ui.tray_refresh_seconds == 5.0
 
 
 class TestCreateDefaultConfig:

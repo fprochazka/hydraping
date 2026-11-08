@@ -165,6 +165,8 @@ class Endpoint:
     primary_check_type: CheckType | None = field(default=None, kw_only=True)
     # Accept any certificate in the TLS layer. Only HTTPS endpoints have one.
     insecure: bool = field(default=False, kw_only=True)
+    # Whether the desktop GUI's top-bar item counts this target. Chain hops count as their chain.
+    tray: bool = field(default=True, kw_only=True)
 
     def __post_init__(self):
         """Initialize endpoint type - to be overridden by subclasses."""
