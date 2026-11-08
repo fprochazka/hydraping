@@ -314,6 +314,32 @@ class TestDashboardChains:
         assert "  • Company: broken at Jumpbox (ICMP: Timeout); Router OK" in lines
         assert not any("Jumpbox: ICMP" in line for line in lines)
 
+    @pytest.mark.parametrize("width", [60, 100, 160])
+    @pytest.mark.parametrize("jumpbox_ok", [True, False])
+    def test_status_ends_in_the_column_where_the_latency_of_the_hops_ends(self, width, jumpbox_ok):
+        router = name(Endpoint.parse("192.0.2.1"), "Router")
+        jumpbox = name(Endpoint.parse("198.51.100.1"), "Jumpbox DNS")
+        target = Endpoint.parse("203.0.113.1")
+        engine = engine_with(Chain(name="Company", hops=[router, jumpbox]), targets=[target])
+        router_index, jumpbox_index = engine.chain_hop_indices[0]
+        now = time.time()
+        engine.store.apply(router_index, [ok(CheckType.ICMP, now)])
+        jumpbox_result = ok(CheckType.ICMP, now) if jumpbox_ok else failed(CheckType.ICMP, now, "x")
+        engine.store.apply(jumpbox_index, [jumpbox_result])
+
+        console = Console(width=width, file=StringIO(), color_system=None)
+        console.print(Dashboard(engine, console=console).render())
+        lines = console.file.getvalue().splitlines()
+
+        assert all(len(line) <= width for line in lines)
+        header, router_line, jumpbox_line = lines[2:5]
+        status = "OK" if jumpbox_ok else "broken at Jumpbox DNS"
+        assert header.lstrip().startswith("Company") and header.endswith(status)
+        router_latency = "10.0ms"
+        jumpbox_latency = router_latency if jumpbox_ok else "FAIL"
+        assert router_line.index(router_latency) + len(router_latency) == len(header)
+        assert jumpbox_line.index(jumpbox_latency) + len(jumpbox_latency) == len(header)
+
 
 class TestChainConfig:
     def write(self, tmp_path, text: str):

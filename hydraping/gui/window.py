@@ -238,12 +238,19 @@ class EndpointRow(QFrame):
 
 
 class ChainHeader(_Columns):
-    """A chain's header row: its name, and where the graphs are, whether and where it broke."""
+    """A chain's header row: its name, and whether and where it broke.
+
+    The status takes the place of the graph and of the latency, and it ends where the latency of
+    the rows below ends, so a long status grows to the left over the graph's space.
+    """
 
     def __init__(self, parent: QWidget | None = None):
         status = QLabel()
+        status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         super().__init__(status, parent)
         self.status = status
+        # A hidden widget takes no space and no spacing, so the status fills the latency's place.
+        self.latency.setVisible(False)
         font = self.name.font()
         font.setBold(True)
         font.setUnderline(True)

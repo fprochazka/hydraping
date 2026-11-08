@@ -284,6 +284,37 @@ class TestMainWindow:
         indents = [endpoint_row.header.name.indent() for endpoint_row in window.endpoint_rows]
         assert indents == [0, 0, INDENT, INDENT]
 
+    @pytest.mark.parametrize(
+        ("broken_at", "wiki_name", "status"),
+        [
+            (None, "Wiki", "OK"),
+            (1, "Wiki behind jumpbox DNS", "broken at Wiki behind jumpbox DNS"),
+        ],
+    )
+    def test_chain_status_ends_where_the_latency_of_the_hops_ends(
+        self, window, broken_at, wiki_name, status
+    ):
+        with_chain = snapshot()
+        [chain] = with_chain.chains
+        wiki_result = ok(CheckType.ICMP, T, 30.0) if broken_at is None else chain.hops[1].current
+        wiki = row("203.0.113.5", wiki_name, [layer(wiki_result)])
+        chain = replace(chain, hops=(chain.hops[0], wiki), broken_at=broken_at)
+        window.show_snapshot(replace(with_chain, chains=(chain,)))
+        window.show()
+        QApplication.processEvents()
+
+        [header] = window.chain_headers
+        assert header.status.text() == status
+
+        def right_edge(label) -> int:
+            return label.mapTo(window, QPoint(label.width(), 0)).x()
+
+        for hop in window.endpoint_rows[2:]:
+            assert abs(right_edge(header.status) - right_edge(hop.header.latency)) <= 2
+        text_width = header.status.fontMetrics().horizontalAdvance(status)
+        assert header.status.width() >= text_width, "the status is not cut"
+        assert header.status.alignment() & Qt.AlignmentFlag.AlignRight
+
     def test_rows_and_problems_share_one_scroll_area_without_a_splitter(self, window):
         window.show_snapshot(snapshot())
 

@@ -143,23 +143,25 @@ class Dashboard:
 
         snapshot = self.engine.snapshot(columns=widths.graph)
 
-        table = Table(show_header=False, box=None, padding=(0, 1))
-        table.add_column("Endpoint", width=widths.endpoint, no_wrap=True)
-        table.add_column("Graph", width=widths.graph, no_wrap=True)
-        table.add_column("Time", width=LATENCY_TIME_WIDTH, justify="right", no_wrap=True)
-        table.add_column("Protocol", width=PROTOCOL_WIDTH, justify="left", no_wrap=True)
-        if widths.interface:
-            table.add_column("Interface", width=widths.interface, no_wrap=True)
-
+        # Rich tables have no cell that spans columns, so each chain header is a line of its own
+        # between tables. Every table has the same fixed column widths, so the columns line up.
+        renderables: list[RenderableType] = []
+        table = self._new_table(widths)
         for row in snapshot.rows:
             self._add_endpoint_row(table, row, widths)
         for index, chain in enumerate(snapshot.chains):
+            if table.row_count:
+                renderables.append(table)
             if snapshot.rows or index > 0:
-                table.add_row()  # An empty line before each chain.
-            self._add_chain_rows(table, chain, widths)
+                renderables.append(Text())  # An empty line before each chain.
+            renderables.append(self._chain_header(chain, widths))
+            table = self._new_table(widths)
+            for hop in chain.hops:
+                self._add_endpoint_row(table, hop, widths, indent=HOP_INDENT)
+        if table.row_count:
+            renderables.append(table)
 
         problems = problem_lines(snapshot)
-        renderables: list[RenderableType] = [table]
         if problems:
             renderables.append(Text())  # Empty line
             renderables.append(Text("Problems:", style="bold red"))
@@ -168,14 +170,31 @@ class Dashboard:
 
         return Group(*renderables)
 
-    def _add_chain_rows(self, table: Table, chain: ChainSnapshot, widths: ColumnWidths):
+    @staticmethod
+    def _new_table(widths: ColumnWidths) -> Table:
+        table = Table(show_header=False, box=None, padding=(0, 1))
+        table.add_column("Endpoint", width=widths.endpoint, no_wrap=True)
+        table.add_column("Graph", width=widths.graph, no_wrap=True)
+        table.add_column("Time", width=LATENCY_TIME_WIDTH, justify="right", no_wrap=True)
+        table.add_column("Protocol", width=PROTOCOL_WIDTH, justify="left", no_wrap=True)
+        if widths.interface:
+            table.add_column("Interface", width=widths.interface, no_wrap=True)
+        return table
+
+    @staticmethod
+    def _chain_header(chain: ChainSnapshot, widths: ColumnWidths) -> Text:
+        """Return the chain's header line: its name, and its status ending under the latency."""
+        name = Text(chain.name, style="bold underline")
+        name.truncate(widths.endpoint, overflow="ellipsis")
+        name.pad_right(widths.endpoint - name.cell_len)
         chain_state = chain_status(chain)
         status_style = {ChainState.BROKEN: "red", ChainState.OK: "green"}.get(chain_state.state)
         status = Text(chain_state.text, style=status_style or "")
-        status.truncate(widths.graph, overflow="ellipsis")
-        table.add_row(Text(chain.name, style="bold underline"), status)
-        for hop in chain.hops:
-            self._add_endpoint_row(table, hop, widths, indent=HOP_INDENT)
+        # The status spans the graph and latency columns and the padding between them.
+        status_width = widths.graph + 2 + LATENCY_TIME_WIDTH
+        status.truncate(status_width, overflow="ellipsis")
+        status.pad_left(status_width - status.cell_len)
+        return Text.assemble(" ", name, "  ", status, no_wrap=True)
 
     def _add_endpoint_row(
         self, table: Table, row: EndpointSnapshot, widths: ColumnWidths, indent: str = ""
