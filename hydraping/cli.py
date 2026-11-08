@@ -11,7 +11,7 @@ from typer.core import TyperGroup
 from hydraping.core.config import Config, create_default_config, get_default_config_path
 from hydraping.core.engine import Engine
 from hydraping.core.models import Endpoint
-from hydraping.gui import INSTALL_HINT, autostart, launcher, missing_gui_packages
+from hydraping.gui import INSTALL_HINT, autostart, launcher, missing_gui_packages, xcb
 from hydraping.tui.dashboard import Dashboard
 
 DEFAULT_COMMAND = "monitor"
@@ -88,6 +88,11 @@ def start_gui(cfg: Config, hidden: bool = False) -> int:
     from hydraping.gui.app import run_gui
 
     return run_gui(cfg, hidden=hidden)
+
+
+def xcb_cursor_missing() -> bool:
+    """Return whether Qt would abort for lack of libxcb-cursor0. Tests replace this."""
+    return xcb.missing_xcb_cursor()
 
 
 def load_config(config: Path | None) -> Config:
@@ -225,7 +230,11 @@ def gui(
         typer.echo(INSTALL_HINT, err=True)
         raise typer.Exit(1)
     cfg = load_config(config)
+    cursor_missing = xcb_cursor_missing()
     if install_desktop_entry or install_autostart:
+        if cursor_missing:
+            # The entries only start the window later, so write them and warn now.
+            typer.echo(f"Warning: {xcb.XCB_CURSOR_HINT}", err=True)
         try:
             executable = autostart.hydraping_executable()
             entry, icon = launcher.install(executable, config)
@@ -240,6 +249,10 @@ def gui(
             typer.echo(f"Wrote the autostart entry {autostart_entry}, which runs at login:")
             typer.echo(f"  {autostart.exec_line(executable, config, hidden=True)}")
         return
+    if cursor_missing:
+        # Without the library, Qt aborts the process with a core dump instead of an error.
+        typer.echo(xcb.XCB_CURSOR_HINT, err=True)
+        raise typer.Exit(1)
     raise typer.Exit(start_gui(cfg, hidden=hidden))
 
 

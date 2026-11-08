@@ -35,6 +35,8 @@ uv tool install .
 uv tool install -e .
 ```
 
+An editable install picks up code changes on `git pull`, but not new dependencies. After a pull that changes the dependencies, run `uv tool install --reinstall -e '.[gui]'`, or the same command without `[gui]`.
+
 ### From PyPI (when published)
 
 ```bash
@@ -99,6 +101,14 @@ uv tool install 'hydraping[gui]'
 ```
 
 Without it, `hydraping gui` prints that command and exits. The extra pins PySide6 to 6.11, because PySide6 6.12.0 crashes Python 3.11 after a few minutes of use.
+
+On an X11 session, such as Ubuntu's "Ubuntu on Xorg", the window also needs the system package `libxcb-cursor0`, which the PySide6 wheels don't include. Without it, Qt aborts the process, so `hydraping gui` checks for the library first and prints the command to install it:
+
+```bash
+sudo apt install libxcb-cursor0
+```
+
+`--install-desktop-entry` and `--install-autostart` print the same hint as a warning and still write their files.
 
 #### Application launcher
 

@@ -10,6 +10,7 @@ from hydraping import cli
 from hydraping.core.config import Config
 from hydraping.core.models import IPEndpoint
 from hydraping.gui import INSTALL_HINT
+from hydraping.gui.xcb import XCB_CURSOR_HINT
 
 runner = CliRunner()
 
@@ -133,6 +134,20 @@ def test_gui_hidden_is_passed_on(gui_started, config_file):
     assert result.exit_code == 0, result.output
     [(_, hidden)] = gui_started
     assert hidden
+
+
+@pytest.fixture
+def xcb_cursor_missing(monkeypatch):
+    """Act as if Qt would use xcb and libxcb-cursor0 were not installed."""
+    monkeypatch.setattr(cli, "xcb_cursor_missing", lambda: True)
+
+
+def test_gui_without_xcb_cursor_prints_the_hint(gui_started, xcb_cursor_missing, config_file):
+    result = runner.invoke(cli.app, ["gui", "--config", str(config_file)])
+
+    assert result.exit_code == 1
+    assert result.stderr == f"{XCB_CURSOR_HINT}\n"
+    assert gui_started == []
 
 
 @pytest.fixture(autouse=True)
@@ -273,6 +288,18 @@ def test_gui_remove_autostart(gui_started, config_home, hydraping_script, config
     assert not entry.exists()
     assert again.exit_code == 0, again.output
     assert again.output == f"No autostart entry to remove at {entry}\n"
+    assert gui_started == []
+
+
+@pytest.mark.parametrize("option", ["--install-autostart", "--install-desktop-entry"])
+def test_gui_install_without_xcb_cursor_warns_and_writes_the_launcher(
+    gui_started, xcb_cursor_missing, data_home, hydraping_script, config_file, option
+):
+    result = runner.invoke(cli.app, ["gui", option, "--config", str(config_file)])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == f"Warning: {XCB_CURSOR_HINT}\n"
+    assert (data_home / "applications" / "hydraping.desktop").exists()
     assert gui_started == []
 
 
