@@ -43,6 +43,38 @@ def http_responder(status_line: str) -> Handler:
     return handle
 
 
+def raw_responder(*parts: bytes, delay: float = 0.0, stall: bool = False) -> Handler:
+    """Answer with ``parts`` written one by one, ``delay`` seconds apart.
+
+    With ``stall``, keep the connection open afterwards until the client closes it.
+    """
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        request = await reader.readuntil(b"\r\n\r\n")
+        requests.append(request)
+        try:
+            for index, part in enumerate(parts):
+                if index and delay:
+                    await asyncio.sleep(delay)
+                writer.write(part)
+                await writer.drain()
+            if stall:
+                await reader.read(-1)
+            writer.close()
+            await writer.wait_closed()
+        except (ConnectionResetError, BrokenPipeError):
+            pass  # The client stopped reading once it had what it needed.
+
+    requests: list[bytes] = []
+    handle.requests = requests  # type: ignore[attr-defined]
+    return handle
+
+
+def head(status: str = "200 OK", *headers: str) -> bytes:
+    lines = [f"HTTP/1.1 {status}", *headers, "Connection: close", "", ""]
+    return "\r\n".join(lines).encode()
+
+
 async def silent(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     """Accept, read until the client gives up, and never answer."""
     await reader.read(-1)
@@ -418,6 +450,103 @@ class TestTLS:
         # The peer never answers the TLS close_notify either, so the close must give up on the
         # graceful path and abort instead of waiting for it.
         assert TIMEOUT <= took < TIMEOUT + 0.3
+
+
+class TestExpectBody:
+    async def test_text_in_a_plain_body_passes_with_latency_up_to_the_status_line(self):
+        body = b"fl=1\nip=192.0.2.1\nmarker=on\n"
+        handler = raw_responder(
+            head("200 OK", f"Content-Length: {len(body)}"), body, delay=TIMEOUT * 0.4
+        )
+        async with server(handler) as port:
+            target = ConnectionTarget("127.0.0.1", port, http=HTTPRequest(expect_body="marker=on"))
+            tcp, http = await ConnectionChecker(timeout=TIMEOUT).check(target)
+
+        assert tcp.success
+        assert http.success, http.error_message
+        # The body came TIMEOUT * 0.4 after the status line; the latency does not include it.
+        assert http.latency_ms is not None and http.latency_ms < TIMEOUT * 0.4 * 1000
+        [request] = handler.requests
+        assert b"accept-encoding" not in request.lower()
+
+    async def test_text_split_across_two_chunks_is_found(self):
+        chunked = b"6\r\nmarker\r\n3\r\n=on\r\n0\r\n\r\n"
+        handler = raw_responder(head("200 OK", "Transfer-Encoding: chunked"), chunked)
+        async with server(handler) as port:
+            target = ConnectionTarget("127.0.0.1", port, http=HTTPRequest(expect_body="marker=on"))
+            _, http = await ConnectionChecker(timeout=TIMEOUT).check(target)
+
+        assert http.success, http.error_message
+
+    async def test_missing_text_fails_at_http_with_the_bytes_read(self):
+        body = b"marker=off\n"
+        handler = raw_responder(head("200 OK", f"Content-Length: {len(body)}"), body)
+        async with server(handler) as port:
+            target = ConnectionTarget("127.0.0.1", port, http=HTTPRequest(expect_body="marker=on"))
+            tcp, http = await ConnectionChecker(timeout=TIMEOUT).check(target)
+
+        assert tcp.success
+        assert not http.success and not http.skipped
+        assert http.failed_layer == CheckType.HTTP
+        assert http.error_message == 'Response body lacks "marker=on" (read 11 bytes)'
+
+    async def test_body_larger_than_the_limit_without_the_text_fails_after_64_kib(self):
+        body = b"x" * (ConnectionChecker.BODY_LIMIT_BYTES + 6 * 1024) + b"marker=on"
+        handler = raw_responder(head("200 OK", f"Content-Length: {len(body)}"), body)
+        async with server(handler) as port:
+            target = ConnectionTarget("127.0.0.1", port, http=HTTPRequest(expect_body="marker=on"))
+            _, http = await ConnectionChecker(timeout=TIMEOUT).check(target)
+
+        assert http.error_message == 'Response body lacks "marker=on" in the first 64 KiB'
+
+    async def test_server_that_stalls_after_the_headers_hits_the_deadline_at_http(self):
+        handler = raw_responder(head("200 OK", "Content-Length: 100"), b"partial", stall=True)
+        async with server(handler) as port:
+            target = ConnectionTarget("127.0.0.1", port, http=HTTPRequest(expect_body="marker=on"))
+            started = time.perf_counter()
+            tcp, http = await ConnectionChecker(timeout=TIMEOUT).check(target)
+            took = time.perf_counter() - started
+
+        assert tcp.success
+        assert re.fullmatch(
+            rf"Timeout: probe deadline {TIMEOUT}s reached \(TCP took 0\.\ds\)", http.error_message
+        ), http.error_message
+        assert TIMEOUT <= took < TIMEOUT + 0.3
+
+    async def test_failing_status_fails_without_reading_the_body(self):
+        # The body never comes: reading it would run into the probe deadline.
+        handler = raw_responder(head("503 Service Unavailable", "Content-Length: 100"), stall=True)
+        async with server(handler) as port:
+            target = ConnectionTarget("127.0.0.1", port, http=HTTPRequest(expect_body="marker=on"))
+            started = time.perf_counter()
+            _, http = await ConnectionChecker(timeout=TIMEOUT).check(target)
+            took = time.perf_counter() - started
+
+        assert http.error_message == "HTTP 503 Service Unavailable"
+        assert took < TIMEOUT / 2
+
+    async def test_malformed_chunk_size_fails_at_http(self):
+        handler = raw_responder(head("200 OK", "Transfer-Encoding: chunked"), b"zz\r\nabc\r\n")
+        async with server(handler) as port:
+            target = ConnectionTarget("127.0.0.1", port, http=HTTPRequest(expect_body="marker=on"))
+            _, http = await ConnectionChecker(timeout=TIMEOUT).check(target)
+
+        assert http.error_message == "Malformed chunked response: 'zz'"
+
+    async def test_text_found_over_tls(self, ca):
+        body = b"marker=on\n"
+        handler = raw_responder(head("200 OK", f"Content-Length: {len(body)}"), body)
+        async with server(handler, server_context(ca, "localhost")) as port:
+            target = ConnectionTarget(
+                "localhost",
+                port,
+                ip_version=4,
+                tls=True,
+                http=HTTPRequest("/cdn-cgi/trace", "https", expect_body="marker=on"),
+            )
+            measurements = await trusting_checker(ca).check(target)
+
+        assert all(m.success for m in measurements), measurements
 
 
 class TestLowerLayers:

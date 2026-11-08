@@ -27,10 +27,15 @@ def _user_agent() -> str:
 
 @dataclass(frozen=True)
 class HTTPRequest:
-    """The HTTP layer of a probe: a ``GET path`` whose status decides success."""
+    """The HTTP layer of a probe: a ``GET path`` whose status decides success.
+
+    With ``expect_body`` set, a successful status is not enough: the response body must also
+    contain that text, or the layer fails.
+    """
 
     path: str = "/"
     scheme: str = "http"
+    expect_body: str | None = None
 
     def default_port(self) -> int:
         return 443 if self.scheme == "https" else 80
@@ -82,8 +87,11 @@ class ConnectionChecker:
     either one returned. The last resolved address of each (host, ip_version) is kept for the ICMP
     schedule, which pings the same address the chain used.
 
-    HTTP is HTTP/1.1 only, one ``GET`` with ``Connection: close``. The probe reads the status line
-    and closes; redirects are not followed, the status code is the result.
+    HTTP is HTTP/1.1 only, one ``GET`` with ``Connection: close`` and no ``Accept-Encoding``, so
+    servers answer uncompressed. The probe reads the status line and closes; redirects are not
+    followed, the status code is the result. A request with ``expect_body`` reads on after a
+    successful status line and searches the body for the text, see ``_search_body``. The HTTP
+    latency still ends at the status line, so it means the same with and without a body check.
 
     ``ssl_context`` replaces the default verifying context; tests use it to trust a test CA.
     """
@@ -92,6 +100,8 @@ class ConnectionChecker:
     # probe's deadline, within these bounds, and the connection is aborted when that runs out.
     CLOSE_GRACE_MIN_SECONDS = 0.05
     CLOSE_GRACE_MAX_SECONDS = 1.0
+    # How much of a response body ``expect_body`` searches before it gives up.
+    BODY_LIMIT_BYTES = 64 * 1024
 
     def __init__(
         self,
@@ -333,20 +343,131 @@ class ConnectionChecker:
                 )
             latency_ms = (time.perf_counter() - started) * 1000
 
-        if not status_line:
-            return _failed(CheckType.HTTP, "Connection closed before a response", protocol=protocol)
-        status, reason = _parse_status_line(status_line)
-        if status is None:
-            text = status_line.decode("latin-1").strip()
-            return _failed(CheckType.HTTP, f"Not an HTTP response: {text!r}", protocol=protocol)
-        if status > self.http_success_status_max:
-            return _failed(CheckType.HTTP, f"HTTP {status} {reason}".rstrip(), protocol=protocol)
+            if not status_line:
+                return _failed(
+                    CheckType.HTTP, "Connection closed before a response", protocol=protocol
+                )
+            status, reason = _parse_status_line(status_line)
+            if status is None:
+                text = status_line.decode("latin-1").strip()
+                return _failed(CheckType.HTTP, f"Not an HTTP response: {text!r}", protocol=protocol)
+            if status > self.http_success_status_max:
+                return _failed(
+                    CheckType.HTTP, f"HTTP {status} {reason}".rstrip(), protocol=protocol
+                )
+
+            if request.expect_body is not None:
+                expected = request.expect_body
+                try:
+                    found, read = await asyncio.wait_for(
+                        self._search_body(reader, expected.encode()), timeout=budget.remaining()
+                    )
+                except TimeoutError:
+                    return _failed(CheckType.HTTP, budget.timeout_message(), protocol=protocol)
+                except _MalformedResponse as e:
+                    return _failed(CheckType.HTTP, str(e), protocol=protocol)
+                except OSError as e:
+                    return _failed(CheckType.HTTP, f"Connection error: {e}", protocol=protocol)
+                if not found:
+                    if read >= self.BODY_LIMIT_BYTES:
+                        where = f"in the first {self.BODY_LIMIT_BYTES // 1024} KiB"
+                    else:
+                        where = f"(read {read} bytes)"
+                    return _failed(
+                        CheckType.HTTP,
+                        f'Response body lacks "{expected}" {where}',
+                        protocol=protocol,
+                    )
+
         return Measurement(
             check_type=CheckType.HTTP,
             success=True,
             latency_ms=max(latency_ms, 0.0),
             protocol=protocol,
         )
+
+    async def _search_body(self, reader: asyncio.StreamReader, needle: bytes) -> tuple[bool, int]:
+        """Read the rest of a response, the status line already consumed, and look for ``needle``.
+
+        Return whether the body contains it and how many body bytes were read. Reading stops when
+        the text is found, when the connection closes, or after ``BODY_LIMIT_BYTES`` of body.
+
+        The body is searched as plain bytes: nothing is decompressed, which is why the request
+        sends no ``Accept-Encoding``. A ``Transfer-Encoding: chunked`` body is de-chunked first, so
+        a text split across two chunks is still found; chunk extensions and trailers are ignored.
+        A body with ``Content-Length`` is read until the connection closes, which ``Connection:
+        close`` makes the server do after the body.
+        """
+        chunked = False
+        while True:
+            line = await _readline(reader, "Response header line")
+            if not line or line in (b"\r\n", b"\n"):
+                break
+            name, _, value = line.decode("latin-1").partition(":")
+            if name.strip().lower() == "transfer-encoding" and "chunked" in value.lower():
+                chunked = True
+
+        search = _BodySearch(needle, self.BODY_LIMIT_BYTES)
+        if not chunked:
+            while data := await reader.read(search.wanted()):
+                if search.feed(data):
+                    break
+            return search.found, len(search.body)
+
+        while True:
+            size_line = await _readline(reader, "Chunk size line")
+            if not size_line:
+                break
+            try:
+                size = int(size_line.split(b";", 1)[0].strip(), 16)
+            except ValueError:
+                text = size_line.decode("latin-1").strip()
+                raise _MalformedResponse(f"Malformed chunked response: {text!r}") from None
+            if size == 0:
+                break
+            while size > 0:
+                data = await reader.read(min(size, search.wanted()))
+                if not data:
+                    return search.found, len(search.body)
+                size -= len(data)
+                if search.feed(data):
+                    return search.found, len(search.body)
+            await _readline(reader, "Chunk")  # The CRLF that ends the chunk's data.
+        return search.found, len(search.body)
+
+
+class _MalformedResponse(Exception):
+    """A response the body search cannot read; its message is the HTTP layer's failure text."""
+
+
+async def _readline(reader: asyncio.StreamReader, what: str) -> bytes:
+    try:
+        return await reader.readline()
+    except ValueError:
+        # readline() gives up when the stream's limit (64 KiB) fills without a newline.
+        raise _MalformedResponse(f"{what} longer than 64 KiB") from None
+
+
+class _BodySearch:
+    """The body read so far, up to ``limit`` bytes, and whether it contains ``needle``."""
+
+    def __init__(self, needle: bytes, limit: int):
+        self.needle = needle
+        self.limit = limit
+        self.body = bytearray()
+        self.found = False
+
+    def wanted(self) -> int:
+        """Return how many more bytes the search takes."""
+        return self.limit - len(self.body)
+
+    def feed(self, data: bytes) -> bool:
+        """Add ``data`` and return True when the search is over: found, or the limit reached."""
+        # Search from where a match could start that the previous data alone did not contain.
+        start = max(len(self.body) - len(self.needle) + 1, 0)
+        self.body += data[: self.wanted()]
+        self.found = self.body.find(self.needle, start) != -1
+        return self.found or len(self.body) >= self.limit
 
 
 class _Budget:

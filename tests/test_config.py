@@ -9,6 +9,7 @@ from hydraping.core.config import (
     UIConfig,
     create_default_config,
 )
+from hydraping.core.engine import Engine
 from hydraping.core.models import (
     CheckType,
     DomainEndpoint,
@@ -225,6 +226,82 @@ targets = [{ url = "http://example.com/", insecure = true }]
 """)
         with pytest.raises(ValueError, match="only https:// endpoints have a TLS layer"):
             Config.load(config_file)
+
+    def test_expect_body_is_kept_on_http_targets_and_chain_hops(self, tmp_path):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text("""
+version = 2
+[endpoints]
+targets = [
+    { url = "https://192.0.2.1/cdn-cgi/trace", expect_body = "marker=on" },
+    "http://example.com/",
+]
+[[chains]]
+name = "VPN"
+hops = [{ url = "http://example.com/health", expect_body = "ok" }]
+""")
+        config = Config.load(config_file)
+        checked, plain = config.endpoints
+        assert checked.expect_body == "marker=on"
+        assert plain.expect_body is None
+        assert config.chains[0].hops[0].expect_body == "ok"
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            '{ url = "192.0.2.1", expect_body = "ok" }',
+            '{ url = "192.0.2.1:443", expect_body = "ok" }',
+            '{ url = "example.com", expect_body = "ok" }',
+            '{ url = "192.0.2.1:53", protocol = "udp", expect_body = "ok" }',
+        ],
+    )
+    def test_expect_body_on_an_endpoint_without_http_is_an_error(self, tmp_path, endpoint):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text(f"version = 2\n[endpoints]\ntargets = [{endpoint}]\n")
+        with pytest.raises(ValueError, match="only http:// and https:// endpoints have an HTTP"):
+            Config.load(config_file)
+
+    @pytest.mark.parametrize(
+        "check", ['check = "dns", query = "example.com"', 'check = "tailscale"']
+    )
+    def test_expect_body_on_a_check_endpoint_is_an_error(self, tmp_path, check):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text(
+            f'version = 2\n[endpoints]\ntargets = [{{ url = "192.0.2.1", {check}, '
+            'expect_body = "ok" }]\n'
+        )
+        with pytest.raises(ValueError, match="'expect_body' cannot be combined with check"):
+            Config.load(config_file)
+
+    @pytest.mark.parametrize("value", ['""', "1", "true", '["ok"]'])
+    def test_expect_body_must_be_a_non_empty_string(self, tmp_path, value):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text(
+            "version = 2\n[endpoints]\n"
+            f'targets = [{{ url = "https://example.com/", expect_body = {value} }}]\n'
+        )
+        with pytest.raises(ValueError, match="expect_body must be a non-empty string"):
+            Config.load(config_file)
+
+    def test_endpoints_with_different_expect_body_are_measured_separately(self, tmp_path):
+        config_file = tmp_path / "test.toml"
+        config_file.write_text("""
+version = 2
+[endpoints]
+targets = [
+    { url = "https://192.0.2.1/cdn-cgi/trace", expect_body = "marker=on" },
+    { url = "https://192.0.2.1/cdn-cgi/trace", name = "Same probe", expect_body = "marker=on" },
+    "https://192.0.2.1/cdn-cgi/trace",
+]
+[[chains]]
+name = "VPN"
+hops = [{ url = "https://192.0.2.1/cdn-cgi/trace", expect_body = "marker=off" }]
+""")
+        engine = Engine(Config.load(config_file))
+
+        assert engine.target_indices == [0, 0, 1]
+        assert engine.chain_hop_indices == [[2]]
+        assert [e.expect_body for e in engine.measured] == ["marker=on", None, "marker=off"]
 
     def _load_ui(self, tmp_path, ui_body: str) -> UIConfig:
         config_file = tmp_path / "test.toml"

@@ -241,9 +241,22 @@ Supported endpoint formats:
 - **IPv4/IPv6 preference**: `{ url = "google.com", ip_version = 4 }` → Force IPv4 or IPv6
 - **Custom primary check**: `{ url = "example.com", primary_check_type = "tcp" }` → Choose which check to display (dns/icmp/tcp/udp/tls/http)
 - **Any certificate**: `{ url = "https://router.example.internal/", insecure = true }` → Skip certificate verification in the TLS layer (HTTPS only)
+- **Expected body text**: `{ url = "https://1.0.0.1/cdn-cgi/trace", expect_body = "warp=on" }` → The HTTP layer also fails when the response body lacks the text (HTTP and HTTPS only); see [Checking the response body](#checking-the-response-body)
 - **Not in the top bar**: `{ url = "192.0.2.1", tray = false }` → Leave the target out of the `hydraping gui` top-bar item; not allowed on chain hops, which count as their chain
 - **DNS resolver**: `{ url = "192.0.2.53", check = "dns", query = "example.com" }` → ICMP + a query for a random name under the zone; see [DNS resolver hops](#dns-resolver-hops)
 - **Tailscale peer**: `{ url = "jumpbox", check = "tailscale" }` → `tailscale ping` latency and whether the path is direct or relayed; see [Tailscale hops](#tailscale-hops)
+
+### Checking the response body
+
+Some URLs answer `200` whether or not the path you care about works. Cloudflare's `https://1.0.0.1/cdn-cgi/trace` answers `200` with `warp=off` in the body when the request leaves through your normal connection, and with `warp=on` when it goes through Cloudflare WARP. To fail the check while WARP is down, require the text:
+
+```toml
+{ url = "https://1.0.0.1/cdn-cgi/trace", expect_body = "warp=on", name = "WARP" }
+```
+
+After a status code that counts as success, the HTTP layer reads the response until the text shows up, the server closes the connection, 64 KiB of body have been read, or the probe's deadline passes. A body without the text fails the HTTP layer with a problem line such as `HTTP: Response body lacks "warp=on" (read 312 bytes)`. A failing status code fails as before, without reading the body. The HTTP latency still runs from the request to the status line, so it means the same with and without `expect_body`.
+
+The body is compared as plain bytes, case-sensitive. HydraPing asks for no compression, and a chunked body is reassembled before the search. `expect_body` works on `http://` and `https://` targets and chain hops; on any other endpoint it is an error. Two places that probe the same URL with different `expect_body` values are measured separately.
 
 ### Chains
 
@@ -280,7 +293,7 @@ targets = [
 
 Each probe asks the server for the A record of a new random name, `hp-<8 random letters>.<zone>`. No cache on the way can hold that name, so the latency covers the whole resolver path: the server, its forwarders, and the authoritative servers of the zone. Any answer counts as success, including NXDOMAIN, because the server did resolve the question. A timeout, SERVFAIL, REFUSED or any other error code is a failure. Queries go over UDP, or over TCP with `transport = "tcp"`.
 
-The server's address is also pinged, so the row has ICMP and DNS layers, and DNS is the one graphed. The keys `protocol`, `ip_version`, `insecure`, `probe_hex` and `probe_ascii` don't apply to a DNS hop and are rejected. It works in `targets` and as a chain hop.
+The server's address is also pinged, so the row has ICMP and DNS layers, and DNS is the one graphed. The keys `protocol`, `ip_version`, `insecure`, `expect_body`, `probe_hex` and `probe_ascii` don't apply to a DNS hop and are rejected. It works in `targets` and as a chain hop.
 
 ### Tailscale hops
 
@@ -298,7 +311,7 @@ hops = [
 
 Each probe runs `tailscale ping -c 1 --timeout <timeout_seconds>s <peer>`. The latency is the one `tailscale ping` reports, measured at the Tailscale layer, so a firewall on either host doesn't affect it. The latency column shows `(TS direct)` when the reply came over a direct path between the two hosts, and `(TS relay)` when it came through a relay. For a relayed reply, the interface column names the relay: `via DERP xyz` for Tailscale's relay servers, with the region code, or `via peer relay` for a relay node in your tailnet. A path that stays relayed usually means NAT traversal failed, which costs latency.
 
-A probe fails when the `tailscale` command is missing, when tailscaled isn't running, when the peer doesn't exist, or when no reply comes within the timeout. The problem line says which one. The graph shows `!` for a failed probe. The row has only the Tailscale layer: there is no ICMP, because tailscale resolves the peer name itself. The keys `protocol`, `ip_version`, `insecure`, `probe_hex`, `probe_ascii`, `query` and `transport` don't apply to a Tailscale hop and are rejected.
+A probe fails when the `tailscale` command is missing, when tailscaled isn't running, when the peer doesn't exist, or when no reply comes within the timeout. The problem line says which one. The graph shows `!` for a failed probe. The row has only the Tailscale layer: there is no ICMP, because tailscale resolves the peer name itself. The keys `protocol`, `ip_version`, `insecure`, `expect_body`, `probe_hex`, `probe_ascii`, `query` and `transport` don't apply to a Tailscale hop and are rejected.
 
 ## Troubleshooting
 
@@ -373,7 +386,7 @@ Details worth knowing:
 
 - The DNS layer uses the system resolver (`getaddrinfo`), so it sees `/etc/hosts` and the local stub resolver, the same as any application on the machine. With `[dns] servers` set, it queries those servers directly instead. The TCP layer connects to the first address returned, and the ICMP check pings that same address.
 - The TLS layer verifies the certificate chain and the hostname with the system CA store. `insecure = true` turns verification off for one endpoint; the handshake is still measured.
-- The HTTP layer sends one HTTP/1.1 `GET` with `Host`, `User-Agent: hydraping/<version>` and `Connection: close`, reads the status line and closes. Redirects are not followed: a `301` is a result, not a hop, and it counts as success while `http_success_status_max` is 399 or more. HTTP/2 and HTTP/3 are not used.
+- The HTTP layer sends one HTTP/1.1 `GET` with `Host`, `User-Agent: hydraping/<version>` and `Connection: close`, reads the status line and closes. With `expect_body`, it reads on through the body first; see [Checking the response body](#checking-the-response-body). Redirects are not followed: a `301` is a result, not a hop, and it counts as success while `http_success_status_max` is 399 or more. HTTP/2 and HTTP/3 are not used.
 - All layers of one probe share one deadline of `timeout_seconds`, counted from the probe's start. The layer that is still running when the deadline passes fails with a message that says where the time went, for example `Timeout: probe deadline 5.0s reached (DNS took 4.6s)`, and the layers after it are skipped. The layers that finished keep their own latency.
 
 #### Custom Primary Check Type

@@ -165,6 +165,9 @@ class Endpoint:
     primary_check_type: CheckType | None = field(default=None, kw_only=True)
     # Accept any certificate in the TLS layer. Only HTTPS endpoints have one.
     insecure: bool = field(default=False, kw_only=True)
+    # Text the HTTP response body must contain for the HTTP layer to pass. Only URL endpoints have
+    # an HTTP layer.
+    expect_body: str | None = field(default=None, kw_only=True)
     # Whether the desktop GUI's top-bar item counts this target. Chain hops count as their chain.
     tray: bool = field(default=True, kw_only=True)
 

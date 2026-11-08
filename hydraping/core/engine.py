@@ -281,7 +281,9 @@ class Engine:
                 ip_version=endpoint.ip_version,
                 tls=endpoint.uses_tls,
                 insecure=endpoint.insecure,
-                http=HTTPRequest(path=endpoint.path, scheme=endpoint.scheme),
+                http=HTTPRequest(
+                    path=endpoint.path, scheme=endpoint.scheme, expect_body=endpoint.expect_body
+                ),
             )
             schedules.append(chain(target))
         else:

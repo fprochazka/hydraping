@@ -217,7 +217,14 @@ class Config:
 
 
 # Endpoint keys that only an ordinary endpoint understands, not one with a ``check`` type.
-_ORDINARY_ONLY_KEYS = ("protocol", "ip_version", "probe_hex", "probe_ascii", "insecure")
+_ORDINARY_ONLY_KEYS = (
+    "protocol",
+    "ip_version",
+    "probe_hex",
+    "probe_ascii",
+    "insecure",
+    "expect_body",
+)
 
 
 def _parse_check_endpoint(ep_config: dict, url: str) -> Endpoint:
@@ -396,6 +403,19 @@ def _parse_endpoint(ep_config: object, in_chain: bool = False) -> Endpoint:
                 )
             endpoint.insecure = True
 
+        if "expect_body" in ep_config:
+            expect_body = ep_config["expect_body"]
+            if not isinstance(expect_body, str) or not expect_body:
+                raise ValueError(
+                    f"expect_body must be a non-empty string for {url}, got: {expect_body!r}"
+                )
+            if CheckType.HTTP not in endpoint.get_check_types():
+                raise ValueError(
+                    f"expect_body has no effect on {url}: only http:// and https:// endpoints "
+                    "have an HTTP layer"
+                )
+            endpoint.expect_body = expect_body
+
         if "tray" in ep_config:
             tray = ep_config["tray"]
             if not isinstance(tray, bool):
@@ -439,6 +459,7 @@ _KNOWN_ENDPOINT_KEYS = {
     "ip_version",
     "primary_check_type",
     "insecure",
+    "expect_body",
     "tray",
     "probe_hex",
     "probe_ascii",
