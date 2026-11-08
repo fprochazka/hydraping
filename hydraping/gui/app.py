@@ -92,7 +92,9 @@ class GuiApp:
         )
 
     def refresh(self) -> None:
-        snapshot = self.engine.snapshot(columns=self.window.graph_columns())
+        snapshot = self.engine.snapshot(
+            columns=self.window.graph_columns(self.engine.store.capacity)
+        )
         self.window.show_snapshot(snapshot)
         now = time.monotonic()
         if (

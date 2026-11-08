@@ -25,7 +25,6 @@ from hydraping.core.display import (
 from hydraping.core.graphcells import LatencyColor
 from hydraping.core.models import CheckType, LayerKey
 from hydraping.core.snapshot import ChainSnapshot, EndpointSnapshot, EngineSnapshot, LayerView
-from hydraping.core.store import HISTORY_BUCKETS
 from hydraping.gui.colors import LATENCY_RGB, NO_DATA_RGB, hex_color
 from hydraping.gui.graph_widget import CELL_WIDTH, GRAPH_HEIGHT, LAYER_GRAPH_HEIGHT, GraphWidget
 
@@ -390,9 +389,12 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
         self.closed.emit()
 
-    def graph_columns(self) -> int:
-        """Return how many buckets a snapshot needs so the widest graph is full."""
-        return max(1, min(HISTORY_BUCKETS, self._rows_scroll.viewport().width() // CELL_WIDTH))
+    def graph_columns(self, capacity: int) -> int:
+        """Return how many buckets a snapshot needs so the widest graph is full.
+
+        ``capacity`` is how many buckets the store keeps; a wider graph pads with empty columns.
+        """
+        return max(1, min(capacity, self._rows_scroll.viewport().width() // CELL_WIDTH))
 
     def show_snapshot(self, snapshot: EngineSnapshot) -> None:
         structure = _structure(snapshot)

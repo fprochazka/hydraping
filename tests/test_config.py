@@ -303,6 +303,35 @@ hops = [{ url = "https://192.0.2.1/cdn-cgi/trace", expect_body = "marker=off" }]
         assert engine.chain_hop_indices == [[2]]
         assert [e.expect_body for e in engine.measured] == ["marker=on", None, "marker=off"]
 
+    def _load_checks(self, tmp_path, checks_body: str) -> ChecksConfig:
+        config_file = tmp_path / "test.toml"
+        config_file.write_text(
+            f'version = 2\n[endpoints]\ntargets = ["192.0.2.1"]\n[checks]\n{checks_body}\n'
+        )
+        return Config.load(config_file).checks
+
+    def test_history_seconds_defaults_to_one_hour(self, tmp_path):
+        assert self._load_checks(tmp_path, "timeout_seconds = 5.0").history_seconds == 3600
+
+    def test_history_seconds_custom(self, tmp_path):
+        assert self._load_checks(tmp_path, "history_seconds = 600").history_seconds == 600
+
+    @pytest.mark.parametrize("value", ["0", "-60", "true", '"3600"'])
+    def test_history_seconds_must_be_a_positive_number(self, tmp_path, value):
+        with pytest.raises(
+            ValueError, match="checks.history_seconds must be a positive number, got: "
+        ):
+            self._load_checks(tmp_path, f"history_seconds = {value}")
+
+    def test_history_seconds_must_cover_one_bucket(self, tmp_path):
+        with pytest.raises(
+            ValueError,
+            match=r"checks.history_seconds must be at least checks.bucket_seconds \(5.0\), "
+            r"got: 4.0",
+        ):
+            self._load_checks(tmp_path, "history_seconds = 4.0")
+        assert self._load_checks(tmp_path, "history_seconds = 5.0").history_seconds == 5.0
+
     def _load_ui(self, tmp_path, ui_body: str) -> UIConfig:
         config_file = tmp_path / "test.toml"
         config_file.write_text(
@@ -501,6 +530,7 @@ class TestConfigClasses:
         assert checks.adaptive_interval is True
         assert checks.bucket_seconds == 5.0
         assert checks.timeout_seconds == 5.0
+        assert checks.history_seconds == 3600
         assert checks.http_success_status_max == 399
 
     def test_checks_config_rejects_non_positive_timing(self):

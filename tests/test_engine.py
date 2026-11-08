@@ -310,6 +310,31 @@ class TestEngine:
         time.sleep(0.15)
         assert engine.snapshot(columns=1).rows[0].current is latest
 
+    def test_history_seconds_sets_the_ring_size(self):
+        server = listening_socket()
+        port = server.getsockname()[1]
+        checks = ChecksConfig(
+            probe_interval_seconds=0.05,
+            adaptive_interval=False,
+            bucket_seconds=0.5,
+            timeout_seconds=1.0,
+            history_seconds=1.0,
+        )
+        engine = Engine(Config(endpoints=[Endpoint.parse(f"127.0.0.1:{port}")], checks=checks))
+        assert engine.store.capacity == 2
+        try:
+            engine.start()
+            # Results for four buckets: twice what one second of 0.5 s buckets keeps.
+            time.sleep(2.0)
+            [row] = engine.snapshot(columns=10).rows
+        finally:
+            engine.stop()
+            server.close()
+
+        buckets = row.layers[LayerKey(CheckType.TCP, port)].buckets
+        assert len(buckets) == 10
+        assert 1 <= len([bucket for bucket in buckets if bucket is not None]) <= 2
+
     def test_unreachable_port_shows_a_tcp_problem(self):
         server = listening_socket()
         port = server.getsockname()[1]

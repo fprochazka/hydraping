@@ -430,11 +430,12 @@ class TestMainWindow:
     def test_graph_columns_follow_the_window_width(self, window):
         window.resize(600, 400)
         window.show()
-        narrow = window.graph_columns()
+        narrow = window.graph_columns(capacity=720)
         window.resize(1200, 400)
         QApplication.processEvents()
 
-        assert window.graph_columns() > narrow > 0
+        assert window.graph_columns(capacity=720) > narrow > 0
+        assert window.graph_columns(capacity=3) == 3
 
     def test_window_height_fits_its_content(self, window):
         window.show_snapshot(snapshot())

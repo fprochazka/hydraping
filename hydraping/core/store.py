@@ -7,9 +7,15 @@ from dataclasses import dataclass
 
 from hydraping.core.models import CheckResult, LayerKey
 
-# Buckets kept per (endpoint, layer). At the default 5 s bucket this is five hours, enough for any
-# terminal or window width. The size depends on time, not on the display.
-HISTORY_BUCKETS = 3600
+# How far back each (endpoint, layer) keeps results, in memory only, unless checks.history_seconds
+# says otherwise. The span is a time, so the number of buckets depends on bucket_seconds and not
+# on the terminal or window width.
+DEFAULT_HISTORY_SECONDS = 3600.0
+
+
+def history_capacity(history_seconds: float, bucket_seconds: float) -> int:
+    """Return how many buckets cover ``history_seconds``: 720 for one hour of 5 s buckets."""
+    return math.ceil(history_seconds / bucket_seconds)
 
 
 def bucket_index(finished_at: float, bucket_seconds: float) -> int:
@@ -44,9 +50,11 @@ class LayerHistory:
     otherwise still get through.
     """
 
-    def __init__(self, bucket_seconds: float, capacity: int = HISTORY_BUCKETS):
+    def __init__(self, bucket_seconds: float, capacity: int | None = None):
         if bucket_seconds <= 0:
             raise ValueError("bucket_seconds must be positive")
+        if capacity is None:
+            capacity = history_capacity(DEFAULT_HISTORY_SECONDS, bucket_seconds)
         if capacity <= 0:
             raise ValueError("capacity must be positive")
         self.bucket_seconds = bucket_seconds
@@ -99,7 +107,7 @@ class LayerHistory:
 class EndpointHistory:
     """All layers of one endpoint, keyed by ``LayerKey``: TCP has one history per port."""
 
-    def __init__(self, bucket_seconds: float, capacity: int = HISTORY_BUCKETS):
+    def __init__(self, bucket_seconds: float, capacity: int | None = None):
         self.bucket_seconds = bucket_seconds
         self.capacity = capacity
         self.layers: dict[LayerKey, LayerHistory] = {}
@@ -123,10 +131,18 @@ class BucketStore:
     holds ``lock`` for the whole read, so a snapshot never mixes two states.
     """
 
-    def __init__(self, endpoint_count: int, bucket_seconds: float, capacity: int = HISTORY_BUCKETS):
+    def __init__(
+        self,
+        endpoint_count: int,
+        bucket_seconds: float,
+        history_seconds: float = DEFAULT_HISTORY_SECONDS,
+    ):
         self.lock = threading.Lock()
         self.bucket_seconds = bucket_seconds
-        self.endpoints = [EndpointHistory(bucket_seconds, capacity) for _ in range(endpoint_count)]
+        self.capacity = history_capacity(history_seconds, bucket_seconds)
+        self.endpoints = [
+            EndpointHistory(bucket_seconds, self.capacity) for _ in range(endpoint_count)
+        ]
 
     def apply(self, endpoint_index: int, results: Sequence[CheckResult]) -> None:
         """Record the results of one probe for one endpoint. Thread-safe."""

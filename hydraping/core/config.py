@@ -26,6 +26,7 @@ from hydraping.core.models import (
     TailscalePeerEndpoint,
     _is_ip_address,
 )
+from hydraping.core.store import DEFAULT_HISTORY_SECONDS
 
 # The format this release reads. A file without ``version`` is the v1 format and gets migrated.
 CONFIG_VERSION = 2
@@ -48,6 +49,9 @@ class ChecksConfig:
     The maximum stays within ``bucket_seconds``, the width of one graph column, so every column
     gets at least one result. Left unset, it is 5 seconds or the bucket width, whichever is
     shorter: a file with a short bucket written before the key existed must keep loading.
+
+    ``history_seconds`` is how far back each check keeps results, in memory only. It must cover at
+    least one bucket.
     """
 
     DEFAULT_PROBE_INTERVAL_MAX_SECONDS = 5.0
@@ -57,10 +61,16 @@ class ChecksConfig:
     adaptive_interval: bool = True
     bucket_seconds: float = 5.0
     timeout_seconds: float = 5.0
+    history_seconds: float = DEFAULT_HISTORY_SECONDS
     http_success_status_max: int = 399  # HTTP status codes <= this are considered success
 
     def __post_init__(self):
-        for name in ("probe_interval_seconds", "bucket_seconds", "timeout_seconds"):
+        for name in (
+            "probe_interval_seconds",
+            "bucket_seconds",
+            "timeout_seconds",
+            "history_seconds",
+        ):
             value = getattr(self, name)
             if not _is_positive_number(value):
                 raise ValueError(f"checks.{name} must be a positive number, got: {value!r}")
@@ -86,6 +96,11 @@ class ChecksConfig:
             raise ValueError(
                 "checks.probe_interval_max_seconds must be at most checks.bucket_seconds "
                 f"({self.bucket_seconds!r}), got: {self.probe_interval_max_seconds!r}"
+            )
+        if self.history_seconds < self.bucket_seconds:
+            raise ValueError(
+                "checks.history_seconds must be at least checks.bucket_seconds "
+                f"({self.bucket_seconds!r}), got: {self.history_seconds!r}"
             )
 
 
@@ -198,6 +213,7 @@ class Config:
             adaptive_interval=checks_data.get("adaptive_interval", defaults.adaptive_interval),
             bucket_seconds=checks_data.get("bucket_seconds", defaults.bucket_seconds),
             timeout_seconds=checks_data.get("timeout_seconds", defaults.timeout_seconds),
+            history_seconds=checks_data.get("history_seconds", defaults.history_seconds),
             http_success_status_max=checks_data.get(
                 "http_success_status_max", defaults.http_success_status_max
             ),
@@ -445,6 +461,7 @@ _KNOWN_TABLE_KEYS: dict[str, set[str]] = {
         "adaptive_interval",
         "bucket_seconds",
         "timeout_seconds",
+        "history_seconds",
         "http_success_status_max",
     },
     "ui": {"graph_width", "tray_refresh_seconds"},
@@ -684,6 +701,9 @@ bucket_seconds = 5.0
 
 # Timeout for one probe (in seconds)
 timeout_seconds = 5.0
+
+# How much history each check keeps (in seconds), in memory only. At least bucket_seconds.
+history_seconds = 3600
 
 # Maximum HTTP status code considered successful (default: 399)
 # 399: Accept 2xx and 3xx (redirects) as success

@@ -1,7 +1,11 @@
 """Tests for the bucket store, with explicit timestamps."""
 
+import math
+
+import pytest
+
 from hydraping.core.models import CheckResult, CheckType, LayerKey
-from hydraping.core.store import HISTORY_BUCKETS, BucketStore, LayerHistory, bucket_index
+from hydraping.core.store import BucketStore, LayerHistory, bucket_index, history_capacity
 
 
 def result(started_at: float, finished_at: float, latency_ms: float | None = 10.0) -> CheckResult:
@@ -86,15 +90,32 @@ class TestLayerHistory:
         assert [b.index for b in history.view(now=4.5, columns=5) if b is not None] == [2, 3, 4]
         assert history.view(now=4.5, columns=5)[:2] == (None, None)
 
-    def test_default_capacity_is_3600_buckets(self):
-        history = LayerHistory(bucket_seconds=1.0)
-        for second in range(HISTORY_BUCKETS + 10):
-            history.apply(result(float(second), second + 0.1))
+    @pytest.mark.parametrize(
+        ("history_seconds", "bucket_seconds", "capacity"),
+        [(3600, 5.0, 720), (3600, 3.0, 1200), (3600, 7.0, 515), (60, 5.0, 12), (5, 5.0, 1)],
+    )
+    def test_capacity_covers_the_history(self, history_seconds, bucket_seconds, capacity):
+        assert history_capacity(history_seconds, bucket_seconds) == capacity
+        store = BucketStore(1, bucket_seconds, history_seconds)
+        assert store.capacity == capacity
+        assert store.endpoints[0].layer(LayerKey(CheckType.TCP, 443)).capacity == capacity
 
-        view = history.view(now=HISTORY_BUCKETS + 9.5, columns=HISTORY_BUCKETS + 10)
-        kept = [b for b in view if b is not None]
-        assert len(kept) == HISTORY_BUCKETS
-        assert kept[0].index == 10
+    @pytest.mark.parametrize("bucket_seconds", [5.0, 3.0, 7.0])
+    def test_default_history_drops_buckets_older_than_one_hour(self, bucket_seconds):
+        history = LayerHistory(bucket_seconds=bucket_seconds)
+        capacity = math.ceil(3600 / bucket_seconds)
+        assert history.capacity == capacity
+        # Two hours of results, one per bucket, starting at bucket 0.
+        buckets = 2 * capacity
+        for index in range(buckets):
+            started = index * bucket_seconds
+            history.apply(result(started, started + 0.1))
+
+        now = (buckets - 1) * bucket_seconds + 0.5
+        kept = [b for b in history.view(now=now, columns=buckets) if b is not None]
+        assert len(kept) == capacity
+        assert kept[0].index == buckets - capacity
+        assert kept[-1].index == buckets - 1
 
     def test_view_pads_to_the_requested_columns(self):
         history = LayerHistory(bucket_seconds=5.0)

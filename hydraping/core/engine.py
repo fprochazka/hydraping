@@ -193,7 +193,7 @@ class Engine:
             resolver_executor=self.resolver_executor,
         )
 
-        self.store = BucketStore(len(self.measured), checks.bucket_seconds)
+        self.store = BucketStore(len(self.measured), checks.bucket_seconds, checks.history_seconds)
         self.egress = EgressInterfaces()
         # The outgoing interface per store index, written by the egress loop under the store
         # lock. An endpoint without a known address or route has no entry.

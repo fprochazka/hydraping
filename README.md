@@ -232,6 +232,7 @@ probe_interval_max_seconds = 5.0  # A slow or failing target is probed every 5 s
 adaptive_interval = true      # false: probe every probe_interval_seconds whatever the speed
 bucket_seconds = 5.0          # One graph column covers 5 seconds
 timeout_seconds = 5.0         # A probe that takes longer counts as failed
+history_seconds = 3600        # Keep one hour of results per check, in memory only
 http_success_status_max = 399 # HTTP status codes up to this count as success
 
 [ui]
@@ -243,7 +244,7 @@ Unknown keys stop the start with an error that names the key, so a typo cannot s
 
 ### Probe timing
 
-A new probe starts for every check every `probe_interval_seconds`, whether or not the previous one has answered. Each probe gives up after `timeout_seconds`. The graph groups results into columns of `bucket_seconds`; the rightmost column is the one still in progress, and it shows the newest result until its time is over. When a probe finishes, the older probes of the same check that are still running are cancelled, so a slow answer never overwrites a newer one. HydraPing keeps 3600 columns of history per check, five hours at the default width, whatever the terminal size.
+A new probe starts for every check every `probe_interval_seconds`, whether or not the previous one has answered. Each probe gives up after `timeout_seconds`. The graph groups results into columns of `bucket_seconds`; the rightmost column is the one still in progress, and it shows the newest result until its time is over. When a probe finishes, the older probes of the same check that are still running are cancelled, so a slow answer never overwrites a newer one. Each check keeps the results of the last `history_seconds`, one hour by default, in memory only: 720 columns at the default `bucket_seconds`, whatever the terminal or window size. It must be at least `bucket_seconds`. A graph wider than that shows empty columns on the left.
 
 Probing slows down while a target is slow or failing, so the probes don't add load to a link that is already strained. Each check keeps a moving average of how long its last few probes took from start to finish, all layers included. An average of 100 ms or less gives `probe_interval_seconds`. From 100 ms to 500 ms the interval rises in a straight line to `probe_interval_max_seconds`, 5 seconds by default. A probe that took longer, or that failed, counts as 500 ms. The newest probe has half the weight in the average, so one lost packet costs one gap of about 2.5 seconds, and three fast probes in a row bring the interval back to `probe_interval_seconds`. Each check adapts on its own: on a strained link every check slows down together, and one slow server slows down alone.
 
