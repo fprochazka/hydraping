@@ -621,6 +621,10 @@ version = 2
 #   - Leave out of the hydraping gui top bar: { url = "192.0.2.1", tray = false }
 #   - DNS resolver path: { url = "192.0.2.53", check = "dns", query = "example.com" }
 #     asks the server for a random, uncacheable name under the zone on every probe
+#   - Tailscale peer: { url = "jumpbox", check = "tailscale" }
+#     measures `tailscale ping` latency and shows whether the path is direct or relayed
+#   - Expected body text: { url = "https://example.com/status", expect_body = "ok" }
+#     the HTTP check also fails when the response body lacks the text
 #
 # Endpoint types:
 #   - IPv4 address: "8.8.8.8"
