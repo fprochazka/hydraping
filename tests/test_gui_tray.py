@@ -5,7 +5,7 @@ import threading
 import pytest
 from dbus_fast import Message, MessageType, Variant
 
-from hydraping.gui import dbusmenu
+from hydraping.gui import dbusmenu, instance
 from hydraping.gui.tray import INTERFACE, OBJECT_PATH, TrayService
 from hydraping.gui.tray_icon import ICON_SIZES
 from hydraping.gui.tray_status import INITIAL_STATUS, LABEL_GUIDE, IconBar, TrayStatus
@@ -273,3 +273,79 @@ class TestMenu:
 
         assert calls.activated == [None]
         assert calls.quit == 1
+
+
+class TestSingleInstance:
+    def service(self, private_bus, calls) -> TrayService:
+        return TrayService(
+            on_activate=calls.on_activate,
+            on_quit=calls.on_quit,
+            on_registered=calls.on_registered,
+            bus_address=private_bus,
+            bus_name=instance.BUS_NAME,
+        )
+
+    def test_a_second_start_hands_the_activation_token_to_the_first(self, private_bus, watcher):
+        first_calls, second_calls = Calls(), Calls()
+        first = self.service(private_bus, first_calls)
+        second = self.service(private_bus, second_calls)
+        try:
+            first.start()
+            second.start()
+
+            assert first.registered and not first.running_elsewhere
+            assert second.running_elsewhere and not second.registered
+            # Only the first instance shows an item in the top bar.
+            assert watcher.items == [first.unique_name]
+
+            error = second.activate_running_instance({"activation-token": Variant("s", "token-2")})
+            assert error is None
+            wait_until(lambda: first_calls.activated == ["token-2"])
+            assert second_calls.activated == []
+        finally:
+            second.stop()
+            first.stop()
+
+    def test_the_name_is_free_again_after_stop(self, private_bus, calls):
+        first = self.service(private_bus, calls)
+        first.start()
+        first.stop()
+        second = self.service(private_bus, calls)
+        try:
+            second.start()
+            assert not second.running_elsewhere
+        finally:
+            second.stop()
+
+    def test_activate_without_a_token(self, private_bus, loop, client, calls):
+        tray = self.service(private_bus, calls)
+        try:
+            tray.start()
+            proxy = loop.run(
+                _proxy(client, instance.BUS_NAME, instance.OBJECT_PATH, instance.INTERFACE)
+            )
+            loop.run(proxy.call_activate({}))
+            wait_until(lambda: calls.activated == [None])
+        finally:
+            tray.stop()
+
+
+class TestPlatformData:
+    def test_reads_the_launcher_tokens_from_the_environment(self, monkeypatch):
+        monkeypatch.setenv("XDG_ACTIVATION_TOKEN", "wayland-token")
+        monkeypatch.setenv("DESKTOP_STARTUP_ID", "x11-id")
+
+        data = instance.platform_data_from_environment()
+
+        assert data == {
+            "activation-token": Variant("s", "wayland-token"),
+            "desktop-startup-id": Variant("s", "x11-id"),
+        }
+        assert instance.activation_token(data) == "wayland-token"
+
+    def test_without_tokens(self, monkeypatch):
+        monkeypatch.delenv("XDG_ACTIVATION_TOKEN", raising=False)
+        monkeypatch.delenv("DESKTOP_STARTUP_ID", raising=False)
+
+        assert instance.platform_data_from_environment() == {}
+        assert instance.activation_token({}) is None

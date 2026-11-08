@@ -57,6 +57,9 @@ hydraping --config /path/to/config.toml
 
 # Open the desktop window
 hydraping gui
+
+# Start the desktop window hidden at every login
+hydraping gui --install-autostart
 ```
 
 ### Example Output
@@ -124,6 +127,32 @@ Known limits:
 - On Wayland, the window can't open under the icon: the desktop decides where it goes.
 - On Wayland, Open HydraPing in the menu may not bring a window that is already open to the front, because the desktop sends no activation token with a menu click. A double click on the icon sends one.
 - Running `hydraping` and `hydraping gui` at the same time probes every target twice.
+
+#### One window per session
+
+Only one `hydraping gui` runs in a desktop session. A second `hydraping gui` asks the running one to show its window, prints that it did, and exits. The running one keeps its own configuration, so a `--config` given to the second one has no effect. Quit the running one first to load another file.
+
+The running app owns the D-Bus name `io.github.fprochazka.HydraPing` on the session bus and serves the `org.freedesktop.Application` interface there. Without a session bus, there is no such check, and each `hydraping gui` runs on its own.
+
+#### Start at login
+
+`hydraping gui --hidden` starts with only the top bar item, and the window opens from the item. When no top bar host is there at the start, `--hidden` waits 8 seconds for one, because at login the host may start after HydraPing, and then shows the window if none came. The same applies when the host goes away while the window is hidden: the window shows if the host isn't back within 8 seconds. So HydraPing never runs invisible. A second `hydraping gui --hidden` while HydraPing runs does nothing.
+
+To start HydraPing at every login, run:
+
+```bash
+hydraping gui --install-autostart
+```
+
+This writes `~/.config/autostart/hydraping.desktop`, or the same file under `$XDG_CONFIG_HOME` when that is set. The entry runs `hydraping gui --hidden` with the absolute path of the `hydraping` command you ran, so install HydraPing with `uv tool install` first. A `--config` given with `--install-autostart` goes into the entry as an absolute path. The command checks that the configuration loads before it writes the entry. Run it again after you move HydraPing or the configuration file.
+
+To stop starting HydraPing at login, run:
+
+```bash
+hydraping gui --remove-autostart
+```
+
+Both commands print the path of the file they wrote or removed.
 
 ## Configuration
 

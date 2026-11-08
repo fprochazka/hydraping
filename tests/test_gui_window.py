@@ -3,6 +3,7 @@
 import asyncio
 import os
 import socket
+import subprocess
 import sys
 import time
 from dataclasses import replace
@@ -20,6 +21,7 @@ from hydraping.core.graphcells import LatencyColor, classify_cells
 from hydraping.core.models import CheckResult, CheckType, Endpoint, LayerKey, Measurement
 from hydraping.core.snapshot import ChainSnapshot, EndpointSnapshot, EngineSnapshot, LayerView
 from hydraping.core.store import Bucket
+from hydraping.gui import app as gui_app
 from hydraping.gui import dbusmenu
 from hydraping.gui.app import GuiApp
 from hydraping.gui.colors import LATENCY_RGB
@@ -31,6 +33,12 @@ BUCKET = 5.0
 # A bucket boundary; the snapshots below are taken in the bucket that starts here.
 T = 1_000_000_000.0
 COLUMNS = 6
+# A shorter wait for a top-bar host than the app's, so the tests of a hidden window run quickly.
+GRACE_MILLISECONDS = 500
+GRACE_SECONDS = GRACE_MILLISECONDS / 1000
+# Qt's default coarse timers may fire up to 5 % early.
+GRACE_SECONDS_AT_LEAST = GRACE_SECONDS * 0.95
+HIDDEN_CONFIG = Config(endpoints=[Endpoint.parse("192.0.2.1")])
 
 
 @pytest.fixture(scope="module")
@@ -67,6 +75,29 @@ def deadline(qapp):
     yield start
     for timer in timers:
         timer.stop()
+
+
+@pytest.fixture
+def short_grace(monkeypatch):
+    monkeypatch.setattr(gui_app, "TRAY_GRACE_MILLISECONDS", GRACE_MILLISECONDS)
+
+
+def run_polling(gui: GuiApp, step, deadline) -> int:
+    """Run the app, call ``step`` every 20 ms in Qt's thread, and quit once it returns True."""
+
+    def poll_once():
+        if step():
+            gui.quit()
+
+    poll = QTimer()
+    poll.setInterval(20)
+    poll.timeout.connect(poll_once)
+    poll.start()
+    deadline(10_000)
+    try:
+        return gui.run()
+    finally:
+        poll.stop()
 
 
 @pytest.fixture
@@ -635,3 +666,172 @@ class TestGuiApp:
         gaps = [later - earlier for earlier, later in pairwise(tray_updated_at)]
         assert min(gaps) >= tray_refresh_seconds - 0.01
         assert 3 <= len(tray_updated_at) <= elapsed / tray_refresh_seconds + 1
+
+    def test_hidden_without_a_top_bar_host_shows_the_window_after_the_grace_period(
+        self, qapp, private_bus, deadline, short_grace
+    ):
+        gui = GuiApp(HIDDEN_CONFIG, qapp, bus_address=private_bus, hidden=True)
+        started = time.monotonic()
+        seen: list = []
+
+        def step() -> bool:
+            if not seen:
+                seen.append(("visible at start", gui.window.isVisible()))
+            if gui.window.isVisible():
+                seen.append(("shown", time.monotonic() - started >= GRACE_SECONDS_AT_LEAST))
+                return True
+            return False
+
+        assert run_polling(gui, step, deadline) == 0
+        assert seen == [("visible at start", False), ("shown", True)]
+
+    def test_hidden_with_a_host_that_appears_late_stays_hidden(
+        self, qapp, private_bus, deadline, short_grace
+    ):
+        loop = LoopThread()
+        watcher_buses = []
+        gui = GuiApp(HIDDEN_CONFIG, qapp, bus_address=private_bus, hidden=True)
+        steps: list[str] = []
+        registered_at: list[float] = []
+
+        def step() -> bool:
+            if gui.window.isVisible():
+                steps.append("shown")
+                return True
+            if not steps:
+                steps.append("waiting" if gui._tray_grace.isActive() else "not waiting")
+                watcher_bus, _ = loop.run(start_watcher(private_bus))
+                watcher_buses.append(watcher_bus)
+            elif steps == ["waiting"] and gui.tray.registered and not gui._tray_grace.isActive():
+                steps.append("registered")
+                registered_at.append(time.monotonic())
+            elif registered_at and time.monotonic() - registered_at[0] > 2 * GRACE_SECONDS:
+                return True
+            return False
+
+        try:
+            assert run_polling(gui, step, deadline) == 0
+        finally:
+            for watcher_bus in watcher_buses:
+                loop.run(disconnect(watcher_bus))
+            loop.close()
+        assert steps == ["waiting", "registered"]
+
+    def test_hidden_window_shows_when_the_host_stays_away_for_the_grace_period(
+        self, qapp, private_bus, deadline, short_grace
+    ):
+        loop = LoopThread()
+        watcher_bus, _ = loop.run(start_watcher(private_bus))
+        gui = GuiApp(HIDDEN_CONFIG, qapp, bus_address=private_bus, hidden=True)
+        steps: list = []
+        left_at: list[float] = []
+
+        def step() -> bool:
+            if not left_at:
+                steps.append(("visible at start", gui.window.isVisible()))
+                left_at.append(time.monotonic())
+                loop.run(disconnect(watcher_bus))
+            elif gui.window.isVisible():
+                waited = time.monotonic() - left_at[0]
+                steps.append(("shown after the grace period", waited >= GRACE_SECONDS_AT_LEAST))
+                return True
+            return False
+
+        try:
+            assert run_polling(gui, step, deadline) == 0
+        finally:
+            loop.close()
+        assert steps == [("visible at start", False), ("shown after the grace period", True)]
+
+    def test_hidden_window_stays_hidden_when_the_host_comes_back_in_time(
+        self, qapp, private_bus, deadline, short_grace
+    ):
+        loop = LoopThread()
+        first_bus, _ = loop.run(start_watcher(private_bus))
+        watcher_buses = [first_bus]
+        gui = GuiApp(HIDDEN_CONFIG, qapp, bus_address=private_bus, hidden=True)
+        steps: list[str] = []
+        registered_at: list[float] = []
+
+        def step() -> bool:
+            if gui.window.isVisible():
+                steps.append("shown")
+                return True
+            if not steps:
+                loop.run(disconnect(watcher_buses.pop()))
+                steps.append("left")
+            elif steps == ["left"] and gui._tray_grace.isActive():
+                watcher_bus, _ = loop.run(start_watcher(private_bus))
+                watcher_buses.append(watcher_bus)
+                steps.append("back")
+            elif steps[-1] == "back" and gui.tray.registered and not gui._tray_grace.isActive():
+                steps.append("registered")
+                registered_at.append(time.monotonic())
+            elif registered_at and time.monotonic() - registered_at[0] > 2 * GRACE_SECONDS:
+                return True
+            return False
+
+        try:
+            assert run_polling(gui, step, deadline) == 0
+        finally:
+            for watcher_bus in watcher_buses:
+                loop.run(disconnect(watcher_bus))
+            loop.close()
+        assert steps == ["left", "back", "registered"]
+
+    def test_hidden_with_a_host_and_a_second_start_shows_the_window(
+        self, qapp, private_bus, tmp_path, deadline
+    ):
+        loop = LoopThread()
+        watcher_bus, watcher = loop.run(start_watcher(private_bus))
+        config_file = tmp_path / "settings.toml"
+        config_file.write_text('version = 2\n[endpoints]\ntargets = ["192.0.2.1"]\n')
+        config = Config(endpoints=[Endpoint.parse("192.0.2.1")])
+        gui = GuiApp(config, qapp, bus_address=private_bus, hidden=True)
+        tokens: list[str] = []
+        gui._bridge.open_requested.connect(tokens.append)
+        steps: list = []
+
+        def second_start():
+            steps.append(("visible at start", gui.window.isVisible()))
+            env = dict(
+                os.environ,
+                DBUS_SESSION_BUS_ADDRESS=private_bus,
+                QT_QPA_PLATFORM="offscreen",
+                XDG_ACTIVATION_TOKEN="token-from-launcher",
+            )
+            # Qt's thread blocks here; the activation arrives on the D-Bus thread meanwhile.
+            second = subprocess.run(
+                [sys.executable, "-m", "hydraping", "gui", "--config", str(config_file)],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            steps.append(("second exit code", second.returncode, second.stderr.strip()))
+
+        def quit_once_shown():
+            if gui.window.isVisible():
+                gui.quit()
+
+        QTimer.singleShot(0, second_start)
+        poll = QTimer()
+        poll.setInterval(50)
+        poll.timeout.connect(quit_once_shown)
+        poll.start()
+        deadline(60_000)
+        try:
+            exit_code = gui.run()
+        finally:
+            poll.stop()
+            loop.run(disconnect(watcher_bus))
+            loop.close()
+
+        assert exit_code == 0
+        assert steps == [
+            ("visible at start", False),
+            ("second exit code", 0, "HydraPing is already running; its window is shown now."),
+        ]
+        assert tokens == ["token-from-launcher"]
+        assert watcher.items == [gui.tray.unique_name]

@@ -9,6 +9,9 @@ changes, for example after the shell restarts. It serves its icon as raw pixels,
 ``QSystemTrayIcon`` speaks the same protocol, but it can't set a label, which is why this module
 talks D-Bus itself. It never touches Qt: the D-Bus thread only calls the callbacks it was given,
 and the owner makes those hand over to Qt's thread.
+
+The same connection holds the app's well-known name (see ``hydraping.gui.instance``), so the name
+lives exactly as long as the item.
 """
 
 import asyncio
@@ -17,7 +20,16 @@ import threading
 from collections.abc import Callable
 from typing import Annotated, Any
 
-from dbus_fast import BusType, Message, MessageFlag, MessageType, PropertyAccess
+from dbus_fast import (
+    BusType,
+    Message,
+    MessageFlag,
+    MessageType,
+    NameFlag,
+    PropertyAccess,
+    RequestNameReply,
+    Variant,
+)
 from dbus_fast.aio import MessageBus
 from dbus_fast.annotations import (
     DBusBool,
@@ -28,7 +40,7 @@ from dbus_fast.annotations import (
 )
 from dbus_fast.service import ServiceInterface, dbus_method, dbus_property, dbus_signal
 
-from hydraping.gui import dbusmenu
+from hydraping.gui import dbusmenu, instance
 from hydraping.gui.tray_icon import icon_pixmaps
 from hydraping.gui.tray_status import INITIAL_STATUS, LABEL_GUIDE, TrayStatus
 
@@ -203,6 +215,11 @@ class TrayService:
     The callbacks run on that thread: ``on_activate`` with the activation token or None when the
     host asks to open the window, ``on_quit`` for the menu's Quit, and ``on_registered`` with
     whether a host shows the item now. ``update`` and ``stop`` may be called from any thread.
+
+    With ``bus_name``, the service first claims that name and serves
+    ``instance.ApplicationInterface`` under it, whose ``Activate`` calls ``on_activate`` too. If
+    another process owns the name, ``running_elsewhere`` is set after ``start()``, and the item is
+    not registered: the caller may hand over with ``activate_running_instance`` and then stop.
     """
 
     def __init__(
@@ -211,10 +228,13 @@ class TrayService:
         on_quit: Callable[[], None],
         on_registered: Callable[[bool], None] = lambda _: None,
         bus_address: str | None = None,
+        bus_name: str | None = None,
     ):
         self._on_registered = on_registered
         self._bus_address = bus_address
+        self._bus_name = bus_name
         self.item = StatusNotifierItemInterface(on_activate)
+        self.application = instance.ApplicationInterface(on_activate)
         self.menu = dbusmenu.DBusMenuInterface(
             dbusmenu.Menu(
                 [
@@ -224,6 +244,7 @@ class TrayService:
             )
         )
         self.registered = False
+        self.running_elsewhere = False
         # Why the item isn't shown, when it isn't: no session bus, or no host on it.
         self.error: str | None = None
         self.unique_name: str | None = None
@@ -233,6 +254,7 @@ class TrayService:
         self._stopping: asyncio.Event | None = None
         self._started = threading.Event()
         self._thread: threading.Thread | None = None
+        self._bus: MessageBus | None = None
 
     def start(self) -> None:
         """Connect and register; return once the first registration attempt is done."""
@@ -264,6 +286,40 @@ class TrayService:
             self._thread.join()
             self._thread = None
 
+    def activate_running_instance(self, platform_data: dict[str, Variant]) -> str | None:
+        """Ask the process that owns ``bus_name`` to show its window.
+
+        Blocks until it answers. Returns None on success, or why the call failed. Call it only
+        after ``start()`` set ``running_elsewhere``.
+        """
+        with self._lock:
+            loop, bus = self._loop, self._bus
+        if loop is None or bus is None or self._bus_name is None:
+            return "not connected to the session bus"
+        call = bus.call(
+            Message(
+                destination=self._bus_name,
+                path=instance.OBJECT_PATH,
+                interface=instance.INTERFACE,
+                member="Activate",
+                signature="a{sv}",
+                body=[platform_data],
+                flags=MessageFlag.NO_AUTOSTART,
+            )
+        )
+        try:
+            reply = asyncio.run_coroutine_threadsafe(call, loop).result(
+                instance.ACTIVATE_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            return f"no answer within {instance.ACTIVATE_TIMEOUT_SECONDS:g} s"
+        except Exception as e:
+            return str(e) or type(e).__name__
+        if reply.message_type == MessageType.ERROR:
+            detail = reply.body[0] if reply.body else ""
+            return f"{reply.error_name}: {detail}".rstrip(": ")
+        return None
+
     def _apply_status(self) -> None:
         with self._lock:
             status = self._status
@@ -283,6 +339,18 @@ class TrayService:
             self.error = f"no session bus: {e}"
             return
         try:
+            self.unique_name = bus.unique_name
+            with self._lock:
+                self._bus = bus
+                self._loop = asyncio.get_running_loop()
+                self._stopping = asyncio.Event()
+                stopping = self._stopping
+            if self._bus_name is not None and not await self._claim_name(bus):
+                # Stay connected, so the caller can still reach the running instance.
+                self.running_elsewhere = True
+                self._started.set()
+                await stopping.wait()
+                return
             bus.export(OBJECT_PATH, self.item)
             bus.export(dbusmenu.OBJECT_PATH, self.menu)
             bus.add_message_handler(lambda message: self._on_message(bus, message))
@@ -296,11 +364,6 @@ class TrayService:
                     body=[_NAME_OWNER_CHANGED_RULE],
                 )
             )
-            self.unique_name = bus.unique_name
-            with self._lock:
-                self._loop = asyncio.get_running_loop()
-                self._stopping = asyncio.Event()
-                stopping = self._stopping
             self._apply_status()
             await self._register(bus)
             self._started.set()
@@ -313,7 +376,26 @@ class TrayService:
                 pass
             with self._lock:
                 self._loop = None
+                self._bus = None
             self._set_registered(False)
+
+    async def _claim_name(self, bus: MessageBus) -> bool:
+        """Own ``bus_name`` and serve the application interface; False if another process has it.
+
+        A failure other than "taken" leaves the app without the single-instance guard rather than
+        without a window.
+        """
+        assert self._bus_name is not None
+        bus.export(instance.OBJECT_PATH, self.application)
+        try:
+            reply = await bus.request_name(self._bus_name, NameFlag.DO_NOT_QUEUE)
+        except Exception as e:
+            print(
+                f"HydraPing: could not claim {self._bus_name} on the session bus: {e}",
+                file=sys.stderr,
+            )
+            return True
+        return reply != RequestNameReply.EXISTS
 
     def _on_message(self, bus: MessageBus, message: Message) -> None:
         if (
