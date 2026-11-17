@@ -100,7 +100,7 @@ The window needs the `gui` extra, which installs PySide6 (Qt) and dbus-fast:
 uv tool install 'hydraping[gui]'
 ```
 
-Without it, `hydraping gui` prints that command and exits. The extra pins PySide6 to 6.11, because PySide6 6.12.0 crashes Python 3.11 after a few minutes of use.
+Without it, `hydraping gui` prints that command and exits.
 
 On an X11 session, such as Ubuntu's "Ubuntu on Xorg", the window also needs the system package `libxcb-cursor0`, which the PySide6 wheels don't include. Without it, Qt aborts the process, so `hydraping gui` checks for the library first and prints the command to install it:
 
