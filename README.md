@@ -396,6 +396,17 @@ uv run pytest
 
 The Tailscale integration test is skipped unless `HYDRAPING_TEST_TAILSCALE_PEER` names a peer of your tailnet to ping, for example `HYDRAPING_TEST_TAILSCALE_PEER=jumpbox uv run pytest`.
 
+### Commit hooks
+
+HydraPing monitors the hosts you name: internal domains, tailnet peers, resolver addresses and network interfaces. Those names end up in your `settings.toml`, in pasted dashboard output and in test fixtures, and from there they can slip into a commit. `scripts/hooks` holds a pre-commit and a commit-msg hook that refuse a commit when a staged line or the commit message matches a private identifier. The identifiers live in a file outside the repository, because listing them here would publish the very strings the hooks exist to keep out. Set it up once per clone:
+
+```bash
+git config core.hooksPath scripts/hooks
+git config hooks.forbiddenPatternsFile ~/.config/git/forbidden-patterns.txt  # any path outside the repo
+```
+
+The file holds one extended regex per line, matched case-insensitively; blank lines and `#` comments are ignored. Until `hooks.forbiddenPatternsFile` points at a file with at least one pattern, both hooks refuse every commit and print how to fix it. The hooks check only the lines a commit adds, so a pasted dashboard or other fixture needs its private names replaced with made-up ones before you commit it.
+
 ## How It Works
 
 ### Check Hierarchy
