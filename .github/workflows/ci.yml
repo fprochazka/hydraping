@@ -40,8 +40,10 @@ jobs:
       - uses: actions/checkout@v4
 
       # The GUI tests load Qt, whose libraries link against these; the runner image lacks some.
-      - name: Install Qt system libraries
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libfontconfig1
+      # hydraping gui refuses to start on X11 without libxcb-cursor0, and desktop-file-utils lets
+      # the tests validate the .desktop files they write.
+      - name: Install system packages for the GUI tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libfontconfig1 libxcb-cursor0 desktop-file-utils
 
       - uses: astral-sh/setup-uv@v7
         with:
