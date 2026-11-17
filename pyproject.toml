@@ -3,7 +3,7 @@ name = "hydraping"
 version = "0.1.0"
 description = "Multi-protocol connection tester with live terminal UI - DNS, ICMP, TCP, TLS, and HTTP checks"
 authors = [{ name = "Filip Procházka" }]
-requires-python = ">=3.11,<4"
+requires-python = ">=3.12,<4"
 readme = "README.md"
 license = "MIT"
 keywords = [
@@ -28,7 +28,6 @@ classifiers = [
     "Topic :: System :: Networking :: Monitoring",
     "Topic :: Utilities",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -79,7 +78,7 @@ build-backend = "uv_build"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [

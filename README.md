@@ -16,7 +16,7 @@ Multi-protocol connection tester with live terminal UI - Because it has many "he
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.12+
 - **ICMP (ping) checks** on Linux: your user's group must be in the `net.ipv4.ping_group_range` sysctl. Ubuntu allows all groups by default. If ICMP is not available, HydraPing disables ping checks and shows a warning. See [ICMP permissions on Linux](#icmp-permissions-on-linux).
 
 ## Installation

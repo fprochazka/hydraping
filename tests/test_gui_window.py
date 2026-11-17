@@ -429,19 +429,6 @@ class TestMainWindow:
         assert router.header.latency.text() == "150.0ms"
         assert router.layer_rows[LayerKey(CheckType.ICMP)].latency.text() == "150.0ms"
 
-    def test_refreshing_keeps_the_reference_count_of_none(self, window: MainWindow) -> None:
-        # PySide6 6.12.0 drops a reference to None on every call that returns nothing, and Python
-        # 3.11 aborts when the count reaches zero. This catches a version with that bug.
-        # The warm-up fills Python's and Qt's caches first; even then, normal noise moves the count
-        # by about a hundred. With four rows and at least one such call per row, 500 refreshes drop
-        # 2000 or more references under the bug, well past the 1000 the check allows for noise.
-        for _ in range(10):
-            window.show_snapshot(snapshot())
-        before = sys.getrefcount(None)
-        for _ in range(500):
-            window.show_snapshot(snapshot())
-        assert sys.getrefcount(None) >= before - 1000
-
     def test_graph_columns_follow_the_window_width(self, window: MainWindow) -> None:
         window.resize(600, 400)
         window.show()
