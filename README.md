@@ -385,14 +385,19 @@ If ICMP is not available, HydraPing disables ping checks and keeps monitoring wi
 
 ```bash
 # Install with dev dependencies
-uv sync
+uv sync --dev
 
 # Run linter with auto-fix and formatter (after code changes)
 uv run ruff check --fix . && uv run ruff format .
 
+# Type-check the code and tests (strict)
+uv run mypy
+
 # Run tests
 uv run pytest
 ```
+
+CI runs `ruff check`, `ruff format --check` and `mypy`, and runs the tests on Python 3.12, 3.13, 3.14 and 3.15. The D-Bus tests start a private `dbus-daemon` and are skipped when it is not installed.
 
 The Tailscale integration test is skipped unless `HYDRAPING_TEST_TAILSCALE_PEER` names a peer of your tailnet to ping, for example `HYDRAPING_TEST_TAILSCALE_PEER=jumpbox uv run pytest`.
 
