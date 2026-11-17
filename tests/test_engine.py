@@ -97,7 +97,7 @@ async def run_for(seconds: float, *schedules: ProbeSchedule) -> None:
 
 
 class TestProbeSchedule:
-    async def test_newer_finished_probe_cancels_the_slow_older_one(self):
+    async def test_newer_finished_probe_cancels_the_slow_older_one(self) -> None:
         probe = FakeProbe(10.0, 0.001)
         results: list[CheckResult] = []
         schedule = ProbeSchedule("t", probe, INTERVAL, timeout=1.0, on_results=results.extend)
@@ -109,7 +109,7 @@ class TestProbeSchedule:
         assert all(r.latency_ms != 1.0 for r in results), "a cancelled probe records nothing"
         assert all(result.started_at <= result.finished_at for result in results)
 
-    async def test_in_flight_cap_holds(self):
+    async def test_in_flight_cap_holds(self) -> None:
         probe = FakeProbe(None)
         results: list[CheckResult] = []
         schedule = ProbeSchedule("t", probe, INTERVAL, timeout=0.2, on_results=results.extend)
@@ -123,7 +123,7 @@ class TestProbeSchedule:
         assert results == []
         assert schedule.in_flight == 0
 
-    async def test_hanging_schedule_does_not_delay_another(self):
+    async def test_hanging_schedule_does_not_delay_another(self) -> None:
         hanging = FakeProbe(None)
         quick = FakeProbe(0.001)
         quick_results: list[CheckResult] = []
@@ -141,7 +141,7 @@ class TestProbeSchedule:
         ]
         assert max(gaps) < INTERVAL * 3
 
-    async def test_measurements_of_one_probe_share_the_probe_stamps(self):
+    async def test_measurements_of_one_probe_share_the_probe_stamps(self) -> None:
         probe = FakeProbe(0.01, measurements_per_call=3)
         batches: list[list[CheckResult]] = []
         schedule = ProbeSchedule(
@@ -156,7 +156,7 @@ class TestProbeSchedule:
             assert len({(r.started_at, r.finished_at) for r in batch}) == 1
             assert batch[0].finished_at - batch[0].started_at >= 0.01
 
-    async def test_raising_probe_records_nothing_and_the_schedule_goes_on(self):
+    async def test_raising_probe_records_nothing_and_the_schedule_goes_on(self) -> None:
         calls = 0
 
         async def probe() -> list[Measurement]:
@@ -174,19 +174,19 @@ class TestProbeSchedule:
         assert calls >= 3
         assert results and all(result.latency_ms != 1.0 for result in results)
 
-    def test_rejects_non_positive_timing(self):
+    def test_rejects_non_positive_timing(self) -> None:
         with pytest.raises(ValueError):
             ProbeSchedule("t", FakeProbe(0.0), 0.0, timeout=1.0, on_results=lambda r: None)
         with pytest.raises(ValueError):
             ProbeSchedule("t", FakeProbe(0.0), 1.0, timeout=0.0, on_results=lambda r: None)
 
-    def test_rejects_a_maximum_interval_below_the_interval(self):
+    def test_rejects_a_maximum_interval_below_the_interval(self) -> None:
         with pytest.raises(ValueError, match="max_interval"):
             ProbeSchedule(
                 "t", FakeProbe(0.0), 1.0, timeout=1.0, on_results=lambda r: None, max_interval=0.5
             )
 
-    async def test_interval_follows_the_probe_duration_fast_slow_fast(self):
+    async def test_interval_follows_the_probe_duration_fast_slow_fast(self) -> None:
         """Ticks come every MIN while probes are fast, stretch to MAX while they take long, and come
         back to MIN once the probes are fast again. The slow probes still in flight when the first
         fast one lands are cancelled and don't hold the average up."""
@@ -223,7 +223,7 @@ class TestProbeSchedule:
         assert probe.cancelled > 0, "the first fast probe cancelled the slow ones in flight"
         assert all(r.latency_ms != 500.0 for r in results[-5:]), "the last results are fast"
 
-    async def test_failures_stretch_the_interval_and_the_in_flight_cap_follows(self):
+    async def test_failures_stretch_the_interval_and_the_in_flight_cap_follows(self) -> None:
         probe = PhasedProbe((99.0, None))
         schedule = ProbeSchedule(
             "t", probe, INTERVAL, timeout=1.0, on_results=lambda r: None, max_interval=0.25
@@ -239,7 +239,7 @@ class TestProbeSchedule:
         assert schedule.max_in_flight in (5, 6)
         assert min(gaps_within(probe.ticks, 0.8, 1.5)) >= 0.2
 
-    async def test_without_a_maximum_the_interval_is_fixed(self):
+    async def test_without_a_maximum_the_interval_is_fixed(self) -> None:
         probe = PhasedProbe((99.0, None))
         schedule = ProbeSchedule("t", probe, INTERVAL, timeout=1.0, on_results=lambda r: None)
         probe.start()
@@ -267,7 +267,7 @@ def listening_socket() -> socket.socket:
 
 
 class TestEngine:
-    def test_probes_localhost_and_stops_within_a_second(self):
+    def test_probes_localhost_and_stops_within_a_second(self) -> None:
         server = listening_socket()
         port = server.getsockname()[1]
         config = Config(
@@ -310,7 +310,7 @@ class TestEngine:
         time.sleep(0.15)
         assert engine.snapshot(columns=1).rows[0].current is latest
 
-    def test_history_seconds_sets_the_ring_size(self):
+    def test_history_seconds_sets_the_ring_size(self) -> None:
         server = listening_socket()
         port = server.getsockname()[1]
         checks = ChecksConfig(
@@ -335,7 +335,7 @@ class TestEngine:
         assert len(buckets) == 10
         assert 1 <= len([bucket for bucket in buckets if bucket is not None]) <= 2
 
-    def test_unreachable_port_shows_a_tcp_problem(self):
+    def test_unreachable_port_shows_a_tcp_problem(self) -> None:
         server = listening_socket()
         port = server.getsockname()[1]
         server.close()  # Nothing listens on this port now.
@@ -361,10 +361,10 @@ class TestEngine:
         assert tcp.latest.success is False
         assert any(problem.startswith("TCP: Connection refused") for problem in row.problems)
 
-    def test_stop_without_start_is_a_no_op(self):
+    def test_stop_without_start_is_a_no_op(self) -> None:
         Engine(Config(endpoints=[Endpoint.parse("192.0.2.1")])).stop()
 
-    def test_stop_after_the_loop_failed_to_start(self):
+    def test_stop_after_the_loop_failed_to_start(self) -> None:
         class EngineWithoutLoop(Engine):
             def _thread_main(self) -> None:
                 # What asyncio.run() failing before _main() looks like: no loop, no stop event.
@@ -375,7 +375,7 @@ class TestEngine:
         engine.stop()
         assert not any(t.name == "hydraping-engine" for t in threading.enumerate())
 
-    def test_stop_does_not_wait_for_a_lookup_stuck_in_the_resolver_thread(self):
+    def test_stop_does_not_wait_for_a_lookup_stuck_in_the_resolver_thread(self) -> None:
         release = threading.Event()
         blocked = threading.Event()
 
@@ -405,7 +405,7 @@ class TestEngine:
         assert stop_took < 1.0
         assert not any(t.name == "hydraping-engine" for t in threading.enumerate())
 
-    async def test_icmp_pings_the_address_the_chain_of_the_same_ip_version_resolved(self):
+    async def test_icmp_pings_the_address_the_chain_of_the_same_ip_version_resolved(self) -> None:
         server = listening_socket()
         port = server.getsockname()[1]
         engine = Engine(Config(endpoints=[Endpoint.parse(f"localhost:{port}")]))
@@ -421,14 +421,14 @@ class TestEngine:
         assert engine._resolved_address("localhost", None) is None
         assert engine._resolved_address("192.0.2.1", None) == "192.0.2.1"
 
-    async def test_icmp_records_nothing_for_a_name_its_chain_has_not_resolved(self):
+    async def test_icmp_records_nothing_for_a_name_its_chain_has_not_resolved(self) -> None:
         engine = Engine(Config(endpoints=[Endpoint.parse("example.com")]))
         try:
             assert await engine._icmp_probe("example.com")() == []
         finally:
             engine.resolver_executor.shutdown(wait=False)
 
-    async def test_one_closed_port_of_a_domain_keeps_its_own_steady_history(self):
+    async def test_one_closed_port_of_a_domain_keeps_its_own_steady_history(self) -> None:
         """One port open and one closed must give a steady open-port history and a steady
         problem line for the closed port, not a TCP layer that alternates with every probe.
 
@@ -478,7 +478,7 @@ class TestEngine:
             f"TCP: Connection refused on port {closed_port}"
         ]
 
-    def test_schedules_per_endpoint_type(self):
+    def test_schedules_per_endpoint_type(self) -> None:
         config = Config(
             endpoints=[
                 Endpoint.parse("192.0.2.1"),
@@ -505,7 +505,7 @@ class TestEngine:
             "http://192.0.2.1/ tcp+http",
         ]
 
-    async def test_unexpected_checker_error_fails_the_first_layer_and_skips_the_rest(self):
+    async def test_unexpected_checker_error_fails_the_first_layer_and_skips_the_rest(self) -> None:
         async def broken() -> list[Measurement]:
             raise RuntimeError("checker bug")
 
@@ -539,7 +539,7 @@ def skipped(check_type: CheckType, blocked_by: CheckResult) -> CheckResult:
 
 
 class TestProblems:
-    def test_lower_failures_are_hidden_behind_a_higher_success(self):
+    def test_lower_failures_are_hidden_behind_a_higher_success(self) -> None:
         latest = {
             LayerKey(CheckType.HTTP): passed(CheckType.HTTP),
             LayerKey(CheckType.TCP, 443): passed(CheckType.TCP),
@@ -547,7 +547,7 @@ class TestProblems:
         }
         assert problems_for(latest, icmp_available=True) == []
 
-    def test_failures_above_the_highest_success_are_reported(self):
+    def test_failures_above_the_highest_success_are_reported(self) -> None:
         latest = {
             LayerKey(CheckType.HTTP): failed(CheckType.HTTP, "HTTP 503"),
             LayerKey(CheckType.TCP, 443): passed(CheckType.TCP),
@@ -555,7 +555,7 @@ class TestProblems:
         }
         assert problems_for(latest, icmp_available=True) == ["HTTP: HTTP 503"]
 
-    def test_everything_failing_is_all_reported_in_priority_order(self):
+    def test_everything_failing_is_all_reported_in_priority_order(self) -> None:
         latest = {
             LayerKey(CheckType.ICMP): failed(CheckType.ICMP, "Host unreachable"),
             LayerKey(CheckType.DNS): failed(CheckType.DNS, "NXDOMAIN"),
@@ -565,7 +565,7 @@ class TestProblems:
             "ICMP: Host unreachable",
         ]
 
-    def test_skipped_layers_report_only_the_layer_that_failed(self):
+    def test_skipped_layers_report_only_the_layer_that_failed(self) -> None:
         tcp = failed(CheckType.TCP, "Connection refused on port 443")
         latest = {
             LayerKey(CheckType.DNS): passed(CheckType.DNS),
@@ -576,7 +576,7 @@ class TestProblems:
         }
         assert problems_for(latest, icmp_available=True) == ["TCP: Connection refused on port 443"]
 
-    def test_a_closed_port_is_reported_next_to_an_open_one(self):
+    def test_a_closed_port_is_reported_next_to_an_open_one(self) -> None:
         latest = {
             LayerKey(CheckType.DNS): passed(CheckType.DNS),
             LayerKey(CheckType.TCP, 443): passed(CheckType.TCP),
@@ -585,7 +585,7 @@ class TestProblems:
         }
         assert problems_for(latest, icmp_available=True) == ["TCP: Connection refused on port 80"]
 
-    def test_icmp_failures_are_dropped_while_icmp_is_unavailable(self):
+    def test_icmp_failures_are_dropped_while_icmp_is_unavailable(self) -> None:
         latest = {LayerKey(CheckType.ICMP): failed(CheckType.ICMP, "ICMP unavailable")}
         assert problems_for(latest, icmp_available=False) == []
         assert problems_for(latest, icmp_available=True) == ["ICMP: ICMP unavailable"]

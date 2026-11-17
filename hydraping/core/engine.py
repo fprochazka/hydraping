@@ -88,7 +88,7 @@ class ProbeSchedule:
         self.timeout = timeout
         self.on_results = on_results
         self.durations = ProbeDurations()
-        self._in_flight: dict[asyncio.Task, float] = {}
+        self._in_flight: dict[asyncio.Task[None], float] = {}
         self.skipped_ticks = 0
 
     @property

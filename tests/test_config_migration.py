@@ -2,6 +2,7 @@
 
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -33,18 +34,18 @@ graph_width = 0
 
 
 @pytest.fixture
-def v1_file(tmp_path):
+def v1_file(tmp_path: Path) -> Path:
     path = tmp_path / "settings.toml"
     path.write_text(V1)
     return path
 
 
-def backups(path):
+def backups(path: Path) -> list[Path]:
     return sorted(path.parent.glob(f"{path.name}.v1-backup-*"))
 
 
 class TestMigrateV1Config:
-    def test_rewrites_in_place_and_keeps_comments(self, v1_file):
+    def test_rewrites_in_place_and_keeps_comments(self, v1_file: Path) -> None:
         backup = migrate_v1_config(v1_file)
 
         migrated = v1_file.read_text()
@@ -62,7 +63,7 @@ class TestMigrateV1Config:
         assert backup.name.startswith("settings.toml.v1-backup-")
         assert backup.read_text() == V1
 
-    def test_migrated_file_loads_with_the_old_values(self, v1_file):
+    def test_migrated_file_loads_with_the_old_values(self, v1_file: Path) -> None:
         migrate_v1_config(v1_file)
 
         config = Config.load(v1_file)
@@ -72,10 +73,10 @@ class TestMigrateV1Config:
         assert config.dns.servers == ["192.0.2.53"]
         assert [endpoint.display_name for endpoint in config.endpoints] == ["Router", "example.com"]
 
-    def test_load_migrates_once_and_reports_the_backup(self, v1_file):
-        notices = []
+    def test_load_migrates_once_and_reports_the_backup(self, v1_file: Path) -> None:
+        notices: list[tuple[Path, Path]] = []
 
-        def on_migrated(path, backup):
+        def on_migrated(path: Path, backup: Path) -> None:
             notices.append((path, backup))
 
         first = Config.load(v1_file, on_migrated=on_migrated)
@@ -86,7 +87,9 @@ class TestMigrateV1Config:
         assert path == v1_file
         assert backups(v1_file) == [backup]
 
-    def test_default_notice_goes_to_stderr(self, v1_file, capsys):
+    def test_default_notice_goes_to_stderr(
+        self, v1_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         Config.load(v1_file)
 
         captured = capsys.readouterr()
@@ -95,7 +98,7 @@ class TestMigrateV1Config:
         assert str(backup) in captured.err
         assert "version 2" in captured.err
 
-    def test_file_without_checks_table_gets_one(self, tmp_path):
+    def test_file_without_checks_table_gets_one(self, tmp_path: Path) -> None:
         path = tmp_path / "settings.toml"
         path.write_text('[endpoints]\ntargets = ["192.0.2.1"]\n')
 
@@ -108,14 +111,14 @@ class TestMigrateV1Config:
         )
         assert Config.load(path).checks.probe_interval_seconds == 1.0
 
-    def test_keeps_file_permissions(self, v1_file):
+    def test_keeps_file_permissions(self, v1_file: Path) -> None:
         v1_file.chmod(0o600)
 
         migrate_v1_config(v1_file)
 
         assert stat.S_IMODE(v1_file.stat().st_mode) == 0o600
 
-    def test_both_old_and_new_key_is_an_error(self, tmp_path):
+    def test_both_old_and_new_key_is_an_error(self, tmp_path: Path) -> None:
         path = tmp_path / "settings.toml"
         path.write_text(
             '[endpoints]\ntargets = ["192.0.2.1"]\n'
@@ -125,7 +128,7 @@ class TestMigrateV1Config:
             migrate_v1_config(path)
 
     @pytest.mark.skipif(os.geteuid() == 0, reason="root can write anywhere")
-    def test_unwritable_directory_is_an_error_and_changes_nothing(self, v1_file):
+    def test_unwritable_directory_is_an_error_and_changes_nothing(self, v1_file: Path) -> None:
         directory = v1_file.parent
         directory.chmod(0o500)
         try:

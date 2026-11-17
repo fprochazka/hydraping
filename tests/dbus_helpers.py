@@ -19,7 +19,7 @@ class LoopThread:
     """An asyncio loop on a thread of its own, so synchronous tests (and Qt's event loop on the
     main thread) can use asyncio D-Bus clients."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self.loop.run_forever, daemon=True)
         self._thread.start()
@@ -36,7 +36,7 @@ class LoopThread:
 class FakeWatcher(ServiceInterface):
     """The one method of ``org.kde.StatusNotifierWatcher`` that an item calls."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(WATCHER_NAME)
         self.items: list[str] = []
 
@@ -59,7 +59,8 @@ async def connect(address: str) -> MessageBus:
 
 async def disconnect(bus: MessageBus) -> None:
     bus.disconnect()
-    await bus.wait_for_disconnect()
+    # dbus-fast leaves wait_for_disconnect unannotated.
+    await bus.wait_for_disconnect()  # type: ignore[no-untyped-call]
 
 
 def wait_until(condition: Callable[[], bool], timeout: float = 5.0) -> None:

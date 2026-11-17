@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -16,7 +17,7 @@ runner = CliRunner()
 
 
 @pytest.fixture
-def monitored(monkeypatch) -> list[Config]:
+def monitored(monkeypatch: pytest.MonkeyPatch) -> list[Config]:
     """Record the configs the monitor command would run, instead of starting the dashboard."""
     started: list[Config] = []
     monkeypatch.setattr(cli, "start_monitoring", started.append)
@@ -24,7 +25,7 @@ def monitored(monkeypatch) -> list[Config]:
 
 
 @pytest.fixture
-def gui_started(monkeypatch) -> list[tuple[Config, bool]]:
+def gui_started(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Config, bool]]:
     """Record the configs and the ``hidden`` flags the gui command would run, instead of opening
     a window."""
     started: list[tuple[Config, bool]] = []
@@ -38,13 +39,13 @@ def gui_started(monkeypatch) -> list[tuple[Config, bool]]:
 
 
 @pytest.fixture
-def config_file(tmp_path):
+def config_file(tmp_path: Path) -> Path:
     path = tmp_path / "settings.toml"
     path.write_text('version = 2\n[endpoints]\ntargets = ["198.51.100.7"]\n')
     return path
 
 
-def test_version_prints_version(monitored):
+def test_version_prints_version(monitored: list[Config]) -> None:
     result = runner.invoke(cli.app, ["version"])
 
     assert result.exit_code == 0, result.output
@@ -52,7 +53,7 @@ def test_version_prints_version(monitored):
     assert monitored == []
 
 
-def test_init_writes_config(monitored, tmp_path):
+def test_init_writes_config(monitored: list[Config], tmp_path: Path) -> None:
     path = tmp_path / "settings.toml"
 
     result = runner.invoke(cli.app, ["init", "--config", str(path)])
@@ -62,7 +63,9 @@ def test_init_writes_config(monitored, tmp_path):
     assert monitored == []
 
 
-def test_options_before_command_name_go_to_the_command(monitored, tmp_path):
+def test_options_before_command_name_go_to_the_command(
+    monitored: list[Config], tmp_path: Path
+) -> None:
     path = tmp_path / "settings.toml"
 
     result = runner.invoke(cli.app, ["--config", str(path), "init"])
@@ -72,7 +75,7 @@ def test_options_before_command_name_go_to_the_command(monitored, tmp_path):
     assert monitored == []
 
 
-def test_endpoint_arguments_override_config(monitored, config_file):
+def test_endpoint_arguments_override_config(monitored: list[Config], config_file: Path) -> None:
     result = runner.invoke(cli.app, ["192.0.2.1", "--config", str(config_file)])
 
     assert result.exit_code == 0, result.output
@@ -82,7 +85,9 @@ def test_endpoint_arguments_override_config(monitored, config_file):
     assert endpoint.ip == "192.0.2.1"
 
 
-def test_config_option_alone_monitors_configured_endpoints(monitored, config_file):
+def test_config_option_alone_monitors_configured_endpoints(
+    monitored: list[Config], config_file: Path
+) -> None:
     result = runner.invoke(cli.app, ["--config", str(config_file)])
 
     assert result.exit_code == 0, result.output
@@ -90,7 +95,9 @@ def test_config_option_alone_monitors_configured_endpoints(monitored, config_fil
     assert [endpoint.raw for endpoint in config.endpoints] == ["198.51.100.7"]
 
 
-def test_no_arguments_monitors_default_config(monitored, monkeypatch, config_file):
+def test_no_arguments_monitors_default_config(
+    monitored: list[Config], monkeypatch: pytest.MonkeyPatch, config_file: Path
+) -> None:
     monkeypatch.setattr(cli, "get_default_config_path", lambda: config_file)
 
     result = runner.invoke(cli.app, [])
@@ -99,7 +106,7 @@ def test_no_arguments_monitors_default_config(monitored, monkeypatch, config_fil
     assert len(monitored) == 1
 
 
-def test_help_lists_commands(monitored):
+def test_help_lists_commands(monitored: list[Config]) -> None:
     result = runner.invoke(cli.app, ["--help"])
 
     assert result.exit_code == 0, result.output
@@ -110,7 +117,9 @@ def test_help_lists_commands(monitored):
     assert monitored == []
 
 
-def test_command_name_after_separator_is_an_endpoint(monitored, config_file):
+def test_command_name_after_separator_is_an_endpoint(
+    monitored: list[Config], config_file: Path
+) -> None:
     result = runner.invoke(cli.app, ["--config", str(config_file), "--", "version"])
 
     assert result.exit_code == 0, result.output
@@ -118,7 +127,9 @@ def test_command_name_after_separator_is_an_endpoint(monitored, config_file):
     assert [endpoint.raw for endpoint in config.endpoints] == ["version"]
 
 
-def test_gui_command_runs_the_gui_with_the_config(monitored, gui_started, config_file):
+def test_gui_command_runs_the_gui_with_the_config(
+    monitored: list[Config], gui_started: list[tuple[Config, bool]], config_file: Path
+) -> None:
     result = runner.invoke(cli.app, ["gui", "--config", str(config_file)])
 
     assert result.exit_code == 0, result.output
@@ -128,7 +139,7 @@ def test_gui_command_runs_the_gui_with_the_config(monitored, gui_started, config
     assert monitored == []
 
 
-def test_gui_hidden_is_passed_on(gui_started, config_file):
+def test_gui_hidden_is_passed_on(gui_started: list[tuple[Config, bool]], config_file: Path) -> None:
     result = runner.invoke(cli.app, ["gui", "--hidden", "--config", str(config_file)])
 
     assert result.exit_code == 0, result.output
@@ -137,12 +148,14 @@ def test_gui_hidden_is_passed_on(gui_started, config_file):
 
 
 @pytest.fixture
-def xcb_cursor_missing(monkeypatch):
+def xcb_cursor_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Act as if Qt would use xcb and libxcb-cursor0 were not installed."""
     monkeypatch.setattr(cli, "xcb_cursor_missing", lambda: True)
 
 
-def test_gui_without_xcb_cursor_prints_the_hint(gui_started, xcb_cursor_missing, config_file):
+def test_gui_without_xcb_cursor_prints_the_hint(
+    gui_started: list[tuple[Config, bool]], xcb_cursor_missing: None, config_file: Path
+) -> None:
     result = runner.invoke(cli.app, ["gui", "--config", str(config_file)])
 
     assert result.exit_code == 1
@@ -151,7 +164,7 @@ def test_gui_without_xcb_cursor_prints_the_hint(gui_started, xcb_cursor_missing,
 
 
 @pytest.fixture(autouse=True)
-def config_home(tmp_path, monkeypatch):
+def config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Keep every test away from the real ``~/.config``."""
     home = tmp_path / "config-home"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
@@ -159,7 +172,7 @@ def config_home(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def data_home(tmp_path, monkeypatch):
+def data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Keep every test away from the real ``~/.local/share``."""
     home = tmp_path / "data-home"
     monkeypatch.setenv("XDG_DATA_HOME", str(home))
@@ -167,7 +180,7 @@ def data_home(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def hydraping_script(tmp_path, monkeypatch):
+def hydraping_script(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Make ``sys.argv[0]`` an executable ``hydraping`` script, as when the command runs."""
     script = tmp_path / "bin" / "hydraping"
     script.parent.mkdir()
@@ -178,8 +191,12 @@ def hydraping_script(tmp_path, monkeypatch):
 
 
 def test_gui_install_autostart_writes_the_entry_and_the_launcher(
-    gui_started, config_home, data_home, hydraping_script, config_file
-):
+    gui_started: list[tuple[Config, bool]],
+    config_home: Path,
+    data_home: Path,
+    hydraping_script: Path,
+    config_file: Path,
+) -> None:
     result = runner.invoke(cli.app, ["gui", "--install-autostart", "--config", str(config_file)])
 
     assert result.exit_code == 0, result.output
@@ -200,8 +217,12 @@ def test_gui_install_autostart_writes_the_entry_and_the_launcher(
 
 
 def test_gui_install_desktop_entry(
-    gui_started, config_home, data_home, hydraping_script, config_file
-):
+    gui_started: list[tuple[Config, bool]],
+    config_home: Path,
+    data_home: Path,
+    hydraping_script: Path,
+    config_file: Path,
+) -> None:
     result = runner.invoke(
         cli.app, ["gui", "--install-desktop-entry", "--config", str(config_file)]
     )
@@ -219,8 +240,8 @@ def test_gui_install_desktop_entry(
 
 
 def test_gui_install_desktop_entry_checks_the_config(
-    gui_started, data_home, hydraping_script, tmp_path
-):
+    gui_started: list[tuple[Config, bool]], data_home: Path, hydraping_script: Path, tmp_path: Path
+) -> None:
     broken = tmp_path / "broken.toml"
     broken.write_text("version = 2\n[checks]\nnot_a_key = 1\n")
 
@@ -231,7 +252,12 @@ def test_gui_install_desktop_entry_checks_the_config(
     assert not data_home.exists()
 
 
-def test_gui_remove_desktop_entry(gui_started, data_home, hydraping_script, config_file):
+def test_gui_remove_desktop_entry(
+    gui_started: list[tuple[Config, bool]],
+    data_home: Path,
+    hydraping_script: Path,
+    config_file: Path,
+) -> None:
     runner.invoke(cli.app, ["gui", "--install-desktop-entry", "--config", str(config_file)])
     launcher_entry = data_home / "applications" / "hydraping.desktop"
     icon = data_home / "icons" / "hicolor" / "scalable" / "apps" / "hydraping.svg"
@@ -251,8 +277,12 @@ def test_gui_remove_desktop_entry(gui_started, data_home, hydraping_script, conf
 
 
 def test_gui_remove_autostart_keeps_the_launcher(
-    gui_started, config_home, data_home, hydraping_script, config_file
-):
+    gui_started: list[tuple[Config, bool]],
+    config_home: Path,
+    data_home: Path,
+    hydraping_script: Path,
+    config_file: Path,
+) -> None:
     runner.invoke(cli.app, ["gui", "--install-autostart", "--config", str(config_file)])
 
     result = runner.invoke(cli.app, ["gui", "--remove-autostart"])
@@ -264,8 +294,11 @@ def test_gui_remove_autostart_keeps_the_launcher(
 
 
 def test_gui_install_autostart_checks_the_config(
-    gui_started, config_home, hydraping_script, tmp_path
-):
+    gui_started: list[tuple[Config, bool]],
+    config_home: Path,
+    hydraping_script: Path,
+    tmp_path: Path,
+) -> None:
     broken = tmp_path / "broken.toml"
     broken.write_text("version = 2\n[checks]\nnot_a_key = 1\n")
 
@@ -276,7 +309,12 @@ def test_gui_install_autostart_checks_the_config(
     assert not (config_home / "autostart").exists()
 
 
-def test_gui_remove_autostart(gui_started, config_home, hydraping_script, config_file):
+def test_gui_remove_autostart(
+    gui_started: list[tuple[Config, bool]],
+    config_home: Path,
+    hydraping_script: Path,
+    config_file: Path,
+) -> None:
     runner.invoke(cli.app, ["gui", "--install-autostart", "--config", str(config_file)])
     entry = config_home / "autostart" / "hydraping.desktop"
 
@@ -293,8 +331,13 @@ def test_gui_remove_autostart(gui_started, config_home, hydraping_script, config
 
 @pytest.mark.parametrize("option", ["--install-autostart", "--install-desktop-entry"])
 def test_gui_install_without_xcb_cursor_warns_and_writes_the_launcher(
-    gui_started, xcb_cursor_missing, data_home, hydraping_script, config_file, option
-):
+    gui_started: list[tuple[Config, bool]],
+    xcb_cursor_missing: None,
+    data_home: Path,
+    hydraping_script: Path,
+    config_file: Path,
+    option: str,
+) -> None:
     result = runner.invoke(cli.app, ["gui", option, "--config", str(config_file)])
 
     assert result.exit_code == 0, result.output
@@ -313,7 +356,9 @@ def test_gui_install_without_xcb_cursor_warns_and_writes_the_launcher(
         ["--install-autostart", "--install-desktop-entry"],
     ],
 )
-def test_gui_options_exclude_each_other(gui_started, config_home, data_home, options):
+def test_gui_options_exclude_each_other(
+    gui_started: list[tuple[Config, bool]], config_home: Path, data_home: Path, options: list[str]
+) -> None:
     result = runner.invoke(cli.app, ["gui", *options])
 
     assert result.exit_code == 2
@@ -326,7 +371,7 @@ def test_gui_options_exclude_each_other(gui_started, config_home, data_home, opt
     assert gui_started == []
 
 
-def test_gui_without_pyside6_prints_the_install_hint():
+def test_gui_without_pyside6_prints_the_install_hint() -> None:
     # sys.modules[name] = None makes both importing and finding the package fail, as when the
     # gui extra is not installed. A subprocess keeps this away from the PySide6 other tests use.
     code = (

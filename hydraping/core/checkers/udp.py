@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from typing import Any
 
 from hydraping.core.checkers.base import BaseChecker
 from hydraping.core.models import CheckType, Measurement
@@ -103,12 +104,12 @@ class UDPChecker(BaseChecker):
 class UDPProbeProtocol(asyncio.DatagramProtocol):
     """Simple UDP protocol that tracks if any response is received."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize protocol without event loop dependency."""
-        self._response_received_future = None
+        self._response_received_future: asyncio.Future[bool] | None = None
 
     @property
-    def response_received(self):
+    def response_received(self) -> asyncio.Future[bool]:
         """Get or create the response future lazily.
 
         This avoids calling get_event_loop() during __init__, which can
@@ -120,17 +121,17 @@ class UDPProbeProtocol(asyncio.DatagramProtocol):
             self._response_received_future = loop.create_future()
         return self._response_received_future
 
-    def datagram_received(self, data, addr):
+    def datagram_received(self, data: bytes, addr: tuple[Any, ...]) -> None:
         """Called when a datagram is received."""
         if not self.response_received.done():
             self.response_received.set_result(True)
 
-    def error_received(self, exc):
+    def error_received(self, exc: Exception) -> None:
         """Called when an error is received (e.g., ICMP port unreachable)."""
         if not self.response_received.done():
             self.response_received.set_result(False)
 
-    def connection_lost(self, exc):
+    def connection_lost(self, exc: Exception | None) -> None:
         """Called when connection is closed."""
         if not self.response_received.done():
             self.response_received.set_result(False)

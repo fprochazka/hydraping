@@ -4,6 +4,7 @@ import asyncio
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from hydraping.core.checkers.base import BaseChecker
 from hydraping.core.models import CheckType, Measurement
@@ -132,7 +133,7 @@ class TailscaleChecker(BaseChecker):
         """Return the Tailscale IP the peer last replied from, or None before its first reply."""
         return self._node_ips.get(peer)
 
-    async def check(self, target: str, **kwargs) -> Measurement:
+    async def check(self, target: str, **kwargs: Any) -> Measurement:
         """Ping the peer ``target`` (a name or a Tailscale IP) once."""
         try:
             process = await asyncio.create_subprocess_exec(

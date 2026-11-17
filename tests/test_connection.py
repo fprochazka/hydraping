@@ -7,8 +7,9 @@ import ssl
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager, contextmanager
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from typing import Any, ParamSpec, Protocol, TypeVar, cast
 
 import dns.message
 import dns.rrset
@@ -28,8 +29,21 @@ TIMEOUT = 0.5
 
 Handler = Callable[[asyncio.StreamReader, asyncio.StreamWriter], Awaitable[None]]
 
+P = ParamSpec("P")
+T = TypeVar("T")
 
-def http_responder(status_line: str) -> Handler:
+
+class RecordingHandler(Protocol):
+    """A handler that keeps the request head of every connection it served."""
+
+    requests: list[bytes]
+
+    def __call__(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> Awaitable[None]: ...
+
+
+def http_responder(status_line: str) -> RecordingHandler:
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         request = await reader.readuntil(b"\r\n\r\n")
         requests.append(request)
@@ -39,11 +53,12 @@ def http_responder(status_line: str) -> Handler:
         await writer.wait_closed()
 
     requests: list[bytes] = []
-    handle.requests = requests  # type: ignore[attr-defined]
-    return handle
+    recording = cast(RecordingHandler, handle)  # a function object carrying an attribute
+    recording.requests = requests
+    return recording
 
 
-def raw_responder(*parts: bytes, delay: float = 0.0, stall: bool = False) -> Handler:
+def raw_responder(*parts: bytes, delay: float = 0.0, stall: bool = False) -> RecordingHandler:
     """Answer with ``parts`` written one by one, ``delay`` seconds apart.
 
     With ``stall``, keep the connection open afterwards until the client closes it.
@@ -66,8 +81,9 @@ def raw_responder(*parts: bytes, delay: float = 0.0, stall: bool = False) -> Han
             pass  # The client stopped reading once it had what it needed.
 
     requests: list[bytes] = []
-    handle.requests = requests  # type: ignore[attr-defined]
-    return handle
+    recording = cast(RecordingHandler, handle)  # a function object carrying an attribute
+    recording.requests = requests
+    return recording
 
 
 def head(status: str = "200 OK", *headers: str) -> bytes:
@@ -98,17 +114,20 @@ class SlowDNS(asyncio.DatagramProtocol):
     def __init__(self, delay: float):
         self.delay = delay
         self.transport: asyncio.DatagramTransport | None = None
-        self.answers: set[asyncio.Task] = set()
+        self.answers: set[asyncio.Task[None]] = set()
 
-    def connection_made(self, transport) -> None:
+    # typeshed's DatagramProtocol narrows the transport the same way, with the same ignore.
+    def connection_made(  # type: ignore[override]
+        self, transport: asyncio.DatagramTransport
+    ) -> None:
         self.transport = transport
 
-    def datagram_received(self, data: bytes, addr) -> None:
+    def datagram_received(self, data: bytes, addr: tuple[Any, ...]) -> None:
         task = asyncio.ensure_future(self._answer(data, addr))
         self.answers.add(task)
         task.add_done_callback(self.answers.discard)
 
-    async def _answer(self, data: bytes, addr) -> None:
+    async def _answer(self, data: bytes, addr: tuple[Any, ...]) -> None:
         await asyncio.sleep(self.delay)
         query = dns.message.from_wire(data)
         response = dns.message.make_response(query)
@@ -136,7 +155,7 @@ async def slow_dns_server(delay: float) -> AsyncIterator[int]:
 def closed_port() -> int:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
+    port: int = sock.getsockname()[1]
     sock.close()
     return port
 
@@ -168,7 +187,7 @@ def server_context(ca: trustme.CA, hostname: str) -> ssl.SSLContext:
     return context
 
 
-def tls_server(ca: trustme.CA):
+def tls_server(ca: trustme.CA) -> AbstractAsyncContextManager[int]:
     """An HTTPS server answering 200 with a certificate for "localhost" issued by ``ca``."""
     return server(http_responder("HTTP/1.1 200 OK"), server_context(ca, "localhost"))
 
@@ -219,17 +238,17 @@ def trusting_checker(ca: trustme.CA) -> ConnectionChecker:
 
 
 class TestLayers:
-    def test_ip_target_has_no_dns_layer(self):
+    def test_ip_target_has_no_dns_layer(self) -> None:
         assert ConnectionTarget("127.0.0.1", 80).layers() == [CheckType.TCP]
         assert ConnectionTarget("::1", 80).layers() == [CheckType.TCP]
 
-    def test_https_target_runs_all_four_layers_in_order(self):
+    def test_https_target_runs_all_four_layers_in_order(self) -> None:
         target = ConnectionTarget("example.com", 443, tls=True, http=HTTPRequest("/", "https"))
         assert target.layers() == [CheckType.DNS, CheckType.TCP, CheckType.TLS, CheckType.HTTP]
 
 
 class TestHTTP:
-    async def test_200_passes_every_layer_with_its_own_latency(self):
+    async def test_200_passes_every_layer_with_its_own_latency(self) -> None:
         handler = http_responder("HTTP/1.1 200 OK")
         async with server(handler) as port:
             target = ConnectionTarget("localhost", port, ip_version=4, http=HTTPRequest("/health"))
@@ -249,7 +268,7 @@ class TestHTTP:
         assert "Connection: close" in lines
         assert any(line.startswith("User-Agent: hydraping") for line in lines)
 
-    async def test_500_fails_at_http_only(self):
+    async def test_500_fails_at_http_only(self) -> None:
         async with server(http_responder("HTTP/1.1 500 Internal Server Error")) as port:
             target = ConnectionTarget("127.0.0.1", port, http=HTTPRequest())
             measurements = await ConnectionChecker(timeout=TIMEOUT).check(target)
@@ -260,7 +279,7 @@ class TestHTTP:
         assert http.error_message == "HTTP 500 Internal Server Error"
         assert http.failed_layer == CheckType.HTTP
 
-    async def test_success_status_max_decides(self):
+    async def test_success_status_max_decides(self) -> None:
         async with server(http_responder("HTTP/1.1 302 Found")) as port:
             target = ConnectionTarget("127.0.0.1", port, http=HTTPRequest())
             lenient = await ConnectionChecker(timeout=TIMEOUT).check(target)
@@ -271,7 +290,7 @@ class TestHTTP:
         assert by_layer(lenient)[CheckType.HTTP].success
         assert by_layer(strict)[CheckType.HTTP].error_message == "HTTP 302 Found"
 
-    async def test_server_that_never_answers_fails_at_http_at_the_probe_deadline(self):
+    async def test_server_that_never_answers_fails_at_http_at_the_probe_deadline(self) -> None:
         async with server(silent) as port:
             target = ConnectionTarget("127.0.0.1", port, http=HTTPRequest())
             started = time.perf_counter()
@@ -280,13 +299,14 @@ class TestHTTP:
 
         tcp, http = measurements
         assert tcp.success
+        assert http.error_message is not None
         assert re.fullmatch(
             rf"Timeout: probe deadline {TIMEOUT}s reached \(TCP took 0\.\ds\)", http.error_message
         ), http.error_message
         # The deadline counts from the probe's start, not from the end of the TCP layer.
         assert TIMEOUT <= took < TIMEOUT + 0.3
 
-    async def test_slow_first_layer_leaves_the_next_one_to_hit_the_deadline(self):
+    async def test_slow_first_layer_leaves_the_next_one_to_hit_the_deadline(self) -> None:
         dns_delay = TIMEOUT * 0.6
         async with slow_dns_server(dns_delay) as dns_port, server(silent) as port:
             checker = ConnectionChecker(
@@ -299,16 +319,17 @@ class TestHTTP:
 
         dns, tcp, http = measurements
         assert dns.success and dns.resolved_ip == "127.0.0.1"
-        assert dns.latency_ms >= dns_delay * 1000
-        assert tcp.success and tcp.latency_ms < 100
+        assert dns.latency_ms is not None and dns.latency_ms >= dns_delay * 1000
+        assert tcp.success and tcp.latency_ms is not None and tcp.latency_ms < 100
         assert not http.success and not http.skipped
+        assert http.error_message is not None
         assert re.fullmatch(
             rf"Timeout: probe deadline {TIMEOUT}s reached \(DNS took 0\.\ds, TCP took 0\.\ds\)",
             http.error_message,
         ), http.error_message
         assert TIMEOUT <= took < TIMEOUT + 0.3
 
-    async def test_status_line_longer_than_the_stream_limit_fails_at_http(self):
+    async def test_status_line_longer_than_the_stream_limit_fails_at_http(self) -> None:
         async def endless(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             writer.write(b"x" * (2**16 + 1024))  # Past the 64 KiB StreamReader limit, no newline.
             await writer.drain()
@@ -326,7 +347,7 @@ class TestHTTP:
         assert http.failed_layer == CheckType.HTTP
         assert http.error_message == "Not an HTTP response: no status line in the first 64 KiB"
 
-    async def test_non_http_answer_fails_at_http(self):
+    async def test_non_http_answer_fails_at_http(self) -> None:
         async def ssh_banner(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             writer.write(b"SSH-2.0-OpenSSH_9.6\r\n")
             await writer.drain()
@@ -342,7 +363,7 @@ class TestHTTP:
             "Not an HTTP response: 'SSH-2.0-OpenSSH_9.6'"
         )
 
-    def test_status_line_parsing(self):
+    def test_status_line_parsing(self) -> None:
         assert _parse_status_line(b"HTTP/1.1 404 Not Found\r\n") == (404, "Not Found")
         assert _parse_status_line(b"HTTP/1.0 200\r\n") == (200, "")
         assert _parse_status_line(b"<html>\r\n") == (None, "")
@@ -350,7 +371,7 @@ class TestHTTP:
 
 
 class TestTLS:
-    async def test_trusted_certificate_passes_tls_and_http(self, ca):
+    async def test_trusted_certificate_passes_tls_and_http(self, ca: trustme.CA) -> None:
         async with tls_server(ca) as port:
             target = ConnectionTarget(
                 "localhost", port, ip_version=4, tls=True, http=HTTPRequest("/", "https")
@@ -366,7 +387,7 @@ class TestTLS:
         assert all(m.success for m in measurements), measurements
         assert by_layer(measurements)[CheckType.HTTP].protocol == "https"
 
-    async def test_untrusted_certificate_fails_at_tls_and_skips_http(self, ca):
+    async def test_untrusted_certificate_fails_at_tls_and_skips_http(self, ca: trustme.CA) -> None:
         async with tls_server(ca) as port:
             target = ConnectionTarget("127.0.0.1", port, tls=True, http=HTTPRequest("/", "https"))
             started = time.perf_counter()
@@ -376,13 +397,14 @@ class TestTLS:
         tcp, tls, http = measurements
         assert tcp.success
         assert not tls.success and not tls.skipped
+        assert tls.error_message is not None
         assert tls.error_message.startswith("Certificate verification failed: ")
         assert_skipped(http, CheckType.TLS)
         # asyncio closed the transport when the handshake failed; the probe must not sit on
         # wait_closed() for a connection_lost that never reaches the stream.
         assert took < TIMEOUT
 
-    async def test_hostname_mismatch_fails_at_tls(self, ca):
+    async def test_hostname_mismatch_fails_at_tls(self, ca: trustme.CA) -> None:
         async with tls_server(ca) as port:
             # The certificate is for "localhost"; connecting by address must not match it.
             target = ConnectionTarget("127.0.0.1", port, tls=True)
@@ -390,9 +412,10 @@ class TestTLS:
 
         tls = by_layer(measurements)[CheckType.TLS]
         assert not tls.success
+        assert tls.error_message is not None
         assert "Certificate verification failed" in tls.error_message
 
-    async def test_insecure_accepts_an_untrusted_certificate(self, ca):
+    async def test_insecure_accepts_an_untrusted_certificate(self, ca: trustme.CA) -> None:
         async with tls_server(ca) as port:
             target = ConnectionTarget(
                 "127.0.0.1", port, tls=True, insecure=True, http=HTTPRequest("/", "https")
@@ -401,7 +424,7 @@ class TestTLS:
 
         assert all(m.success for m in measurements), measurements
 
-    async def test_plain_http_server_fails_the_handshake(self):
+    async def test_plain_http_server_fails_the_handshake(self) -> None:
         async def plain_http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             await reader.read(1024)  # the ClientHello
             writer.write(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
@@ -416,10 +439,11 @@ class TestTLS:
         tcp, tls, http = measurements
         assert tcp.success
         assert not tls.success
+        assert tls.error_message is not None
         assert tls.error_message.startswith("TLS handshake failed: "), tls.error_message
         assert_skipped(http, CheckType.TLS)
 
-    async def test_server_that_never_answers_the_handshake_hits_the_deadline(self):
+    async def test_server_that_never_answers_the_handshake_hits_the_deadline(self) -> None:
         async with server(silent) as port:
             target = ConnectionTarget("127.0.0.1", port, tls=True, http=HTTPRequest("/", "https"))
             started = time.perf_counter()
@@ -428,13 +452,16 @@ class TestTLS:
 
         tcp, tls, http = measurements
         assert tcp.success
+        assert tls.error_message is not None
         assert tls.error_message.startswith(
             f"Timeout: probe deadline {TIMEOUT}s reached (TCP took "
         )
         assert_skipped(http, CheckType.TLS)
         assert TIMEOUT <= took < TIMEOUT + 0.3
 
-    async def test_server_that_hangs_after_the_handshake_hits_the_deadline_at_http(self, ca):
+    async def test_server_that_hangs_after_the_handshake_hits_the_deadline_at_http(
+        self, ca: trustme.CA
+    ) -> None:
         with hung_tls_server(ca) as port:
             target = ConnectionTarget(
                 "localhost", port, ip_version=4, tls=True, http=HTTPRequest("/", "https")
@@ -446,6 +473,7 @@ class TestTLS:
         dns, tcp, tls, http = measurements
         assert dns.success and tcp.success and tls.success
         assert not http.success and not http.skipped
+        assert http.error_message is not None
         assert http.error_message.startswith(f"Timeout: probe deadline {TIMEOUT}s reached (")
         # The peer never answers the TLS close_notify either, so the close must give up on the
         # graceful path and abort instead of waiting for it.
@@ -453,7 +481,7 @@ class TestTLS:
 
 
 class TestExpectBody:
-    async def test_text_in_a_plain_body_passes_with_latency_up_to_the_status_line(self):
+    async def test_text_in_a_plain_body_passes_with_latency_up_to_the_status_line(self) -> None:
         body = b"fl=1\nip=192.0.2.1\nmarker=on\n"
         handler = raw_responder(
             head("200 OK", f"Content-Length: {len(body)}"), body, delay=TIMEOUT * 0.4
@@ -469,7 +497,7 @@ class TestExpectBody:
         [request] = handler.requests
         assert b"accept-encoding" not in request.lower()
 
-    async def test_text_split_across_two_chunks_is_found(self):
+    async def test_text_split_across_two_chunks_is_found(self) -> None:
         chunked = b"6\r\nmarker\r\n3\r\n=on\r\n0\r\n\r\n"
         handler = raw_responder(head("200 OK", "Transfer-Encoding: chunked"), chunked)
         async with server(handler) as port:
@@ -478,7 +506,7 @@ class TestExpectBody:
 
         assert http.success, http.error_message
 
-    async def test_missing_text_fails_at_http_with_the_bytes_read(self):
+    async def test_missing_text_fails_at_http_with_the_bytes_read(self) -> None:
         body = b"marker=off\n"
         handler = raw_responder(head("200 OK", f"Content-Length: {len(body)}"), body)
         async with server(handler) as port:
@@ -490,7 +518,7 @@ class TestExpectBody:
         assert http.failed_layer == CheckType.HTTP
         assert http.error_message == 'Response body lacks "marker=on" (read 11 bytes)'
 
-    async def test_body_larger_than_the_limit_without_the_text_fails_after_64_kib(self):
+    async def test_body_larger_than_the_limit_without_the_text_fails_after_64_kib(self) -> None:
         body = b"x" * (ConnectionChecker.BODY_LIMIT_BYTES + 6 * 1024) + b"marker=on"
         handler = raw_responder(head("200 OK", f"Content-Length: {len(body)}"), body)
         async with server(handler) as port:
@@ -499,7 +527,7 @@ class TestExpectBody:
 
         assert http.error_message == 'Response body lacks "marker=on" in the first 64 KiB'
 
-    async def test_server_that_stalls_after_the_headers_hits_the_deadline_at_http(self):
+    async def test_server_that_stalls_after_the_headers_hits_the_deadline_at_http(self) -> None:
         handler = raw_responder(head("200 OK", "Content-Length: 100"), b"partial", stall=True)
         async with server(handler) as port:
             target = ConnectionTarget("127.0.0.1", port, http=HTTPRequest(expect_body="marker=on"))
@@ -508,12 +536,13 @@ class TestExpectBody:
             took = time.perf_counter() - started
 
         assert tcp.success
+        assert http.error_message is not None
         assert re.fullmatch(
             rf"Timeout: probe deadline {TIMEOUT}s reached \(TCP took 0\.\ds\)", http.error_message
         ), http.error_message
         assert TIMEOUT <= took < TIMEOUT + 0.3
 
-    async def test_failing_status_fails_without_reading_the_body(self):
+    async def test_failing_status_fails_without_reading_the_body(self) -> None:
         # The body never comes: reading it would run into the probe deadline.
         handler = raw_responder(head("503 Service Unavailable", "Content-Length: 100"), stall=True)
         async with server(handler) as port:
@@ -525,7 +554,7 @@ class TestExpectBody:
         assert http.error_message == "HTTP 503 Service Unavailable"
         assert took < TIMEOUT / 2
 
-    async def test_malformed_chunk_size_fails_at_http(self):
+    async def test_malformed_chunk_size_fails_at_http(self) -> None:
         handler = raw_responder(head("200 OK", "Transfer-Encoding: chunked"), b"zz\r\nabc\r\n")
         async with server(handler) as port:
             target = ConnectionTarget("127.0.0.1", port, http=HTTPRequest(expect_body="marker=on"))
@@ -533,7 +562,7 @@ class TestExpectBody:
 
         assert http.error_message == "Malformed chunked response: 'zz'"
 
-    async def test_text_found_over_tls(self, ca):
+    async def test_text_found_over_tls(self, ca: trustme.CA) -> None:
         body = b"marker=on\n"
         handler = raw_responder(head("200 OK", f"Content-Length: {len(body)}"), body)
         async with server(handler, server_context(ca, "localhost")) as port:
@@ -550,7 +579,7 @@ class TestExpectBody:
 
 
 class TestLowerLayers:
-    async def test_closed_port_fails_at_tcp_and_skips_the_rest(self):
+    async def test_closed_port_fails_at_tcp_and_skips_the_rest(self) -> None:
         port = closed_port()
         target = ConnectionTarget("127.0.0.1", port, tls=True, http=HTTPRequest("/", "https"))
         measurements = await ConnectionChecker(timeout=TIMEOUT).check(target)
@@ -561,7 +590,7 @@ class TestLowerLayers:
         assert_skipped(tls, CheckType.TCP)
         assert_skipped(http, CheckType.TCP)
 
-    async def test_unresolvable_name_fails_at_dns_and_skips_the_rest(self):
+    async def test_unresolvable_name_fails_at_dns_and_skips_the_rest(self) -> None:
         target = ConnectionTarget(
             "nonexistent.invalid", 443, tls=True, http=HTTPRequest("/", "https")
         )
@@ -571,6 +600,7 @@ class TestLowerLayers:
         dns, tcp, tls, http = measurements
         assert dns.check_type == CheckType.DNS
         assert not dns.success and not dns.skipped
+        assert dns.error_message is not None
         assert dns.error_message.startswith("DNS lookup")
         assert layers_of(measurements) == [
             CheckType.DNS,
@@ -582,7 +612,7 @@ class TestLowerLayers:
             assert_skipped(measurement, CheckType.DNS)
         assert checker.get_last_resolved_ip("nonexistent.invalid") is None
 
-    async def test_resolved_address_is_kept_per_ip_version_for_the_icmp_schedule(self):
+    async def test_resolved_address_is_kept_per_ip_version_for_the_icmp_schedule(self) -> None:
         async with server(silent) as port:
             checker = ConnectionChecker(timeout=TIMEOUT)
             await checker.check(ConnectionTarget("localhost", port, ip_version=4))
@@ -591,12 +621,12 @@ class TestLowerLayers:
         assert checker.get_last_resolved_ip("localhost", 6) is None
         assert checker.get_last_resolved_ip("localhost") is None
 
-    async def test_dns_layer_runs_on_the_given_executor(self):
+    async def test_dns_layer_runs_on_the_given_executor(self) -> None:
         threads: set[str] = set()
 
         class RecordingExecutor(ThreadPoolExecutor):
-            def submit(self, fn, /, *args, **kwargs):
-                def record():
+            def submit(self, fn: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs) -> Future[T]:
+                def record() -> T:
                     threads.add(threading.current_thread().name)
                     return fn(*args, **kwargs)
 
@@ -615,7 +645,7 @@ class TestLowerLayers:
 
 
 class TestCancellation:
-    async def test_cancelled_probe_closes_the_connection_and_applies_nothing(self):
+    async def test_cancelled_probe_closes_the_connection_and_applies_nothing(self) -> None:
         peer_closed = asyncio.Event()
 
         async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

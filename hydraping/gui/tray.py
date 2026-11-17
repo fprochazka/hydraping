@@ -371,7 +371,8 @@ class TrayService:
         finally:
             bus.disconnect()
             try:
-                await bus.wait_for_disconnect()
+                # dbus-fast leaves wait_for_disconnect unannotated.
+                await bus.wait_for_disconnect()  # type: ignore[no-untyped-call]
             except Exception:
                 pass
             with self._lock:

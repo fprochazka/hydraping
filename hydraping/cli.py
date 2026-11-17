@@ -4,6 +4,7 @@ from importlib.metadata import version as get_version
 from pathlib import Path
 from typing import Annotated
 
+import click
 import typer
 from rich.console import Console
 from typer.core import TyperGroup
@@ -25,7 +26,7 @@ class DefaultCommandGroup(TyperGroup):
     "version". Routing happens here, before Click parses any parameter.
     """
 
-    def parse_args(self, ctx: typer.Context, args: list[str]) -> list[str]:
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
         # Everything after "--" is an endpoint, so "hydraping -- version" monitors "version".
         has_separator = "--" in args
         before_separator = args[: args.index("--")] if has_separator else args
@@ -41,7 +42,7 @@ class DefaultCommandGroup(TyperGroup):
             args = [DEFAULT_COMMAND, *args]
         return super().parse_args(ctx, args)
 
-    def _first_positional(self, ctx: typer.Context, args: list[str]) -> int | None:
+    def _first_positional(self, ctx: click.Context, args: list[str]) -> int | None:
         """Return the index of the first argument that is not an option or an option value."""
         monitor = self.commands[DEFAULT_COMMAND]
         value_options = {
@@ -129,7 +130,7 @@ def monitor(
             dir_okay=False,
         ),
     ] = None,
-):
+) -> None:
     """Start monitoring endpoints (default command)."""
     cfg = load_config(config)
 
@@ -192,7 +193,7 @@ def gui(
             help="Remove HydraPing and its icon from the application list, then exit",
         ),
     ] = False,
-):
+) -> None:
     """Open a desktop window with the live measurements."""
     options = {
         "--hidden": hidden,
@@ -275,7 +276,7 @@ def init(
             help="Overwrite existing configuration file",
         ),
     ] = False,
-):
+) -> None:
     """Create a default configuration file."""
     if config is None:
         config = get_default_config_path()
@@ -299,7 +300,7 @@ def init(
 
 
 @app.command()
-def version():
+def version() -> None:
     """Show version information."""
     try:
         pkg_version = get_version("hydraping")

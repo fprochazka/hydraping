@@ -6,11 +6,15 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from itertools import pairwise
+from pathlib import Path
+from typing import Any
 
 import pytest
 from dbus_fast import Variant
+from dbus_fast.aio import MessageBus
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QSplitter, QWidget
@@ -26,6 +30,7 @@ from hydraping.gui import dbusmenu
 from hydraping.gui.app import GuiApp
 from hydraping.gui.colors import LATENCY_RGB
 from hydraping.gui.graph_widget import CELL_WIDTH, GraphWidget, bucket_tooltip
+from hydraping.gui.tray_status import TrayStatus
 from hydraping.gui.window import INDENT, SCREEN_MARGIN, MainWindow
 from tests.dbus_helpers import LoopThread, connect, disconnect, start_watcher
 
@@ -42,12 +47,13 @@ HIDDEN_CONFIG = Config(endpoints=[Endpoint.parse("192.0.2.1")])
 
 
 @pytest.fixture(scope="module")
-def qapp():
+def qapp() -> Iterator[QApplication]:
     """One QApplication on the offscreen platform, which needs no display."""
     previous = os.environ.get("QT_QPA_PLATFORM")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     try:
         app = QApplication.instance() or QApplication(["hydraping-test"])
+        assert isinstance(app, QApplication)
     finally:
         if previous is None:
             del os.environ["QT_QPA_PLATFORM"]
@@ -57,7 +63,7 @@ def qapp():
 
 
 @pytest.fixture
-def deadline(qapp):
+def deadline(qapp: QApplication) -> Iterator[Callable[[int], None]]:
     """Quit Qt's event loop after the given milliseconds, so a stuck test fails instead of hanging.
 
     The timer stops with the test; a bare ``QTimer.singleShot`` would outlive it and quit the
@@ -78,14 +84,14 @@ def deadline(qapp):
 
 
 @pytest.fixture
-def short_grace(monkeypatch):
+def short_grace(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gui_app, "TRAY_GRACE_MILLISECONDS", GRACE_MILLISECONDS)
 
 
-def run_polling(gui: GuiApp, step, deadline) -> int:
+def run_polling(gui: GuiApp, step: Callable[[], bool], deadline: Callable[[int], None]) -> int:
     """Run the app, call ``step`` every 20 ms in Qt's thread, and quit once it returns True."""
 
-    def poll_once():
+    def poll_once() -> None:
         if step():
             gui.quit()
 
@@ -101,14 +107,14 @@ def run_polling(gui: GuiApp, step, deadline) -> int:
 
 
 @pytest.fixture
-def window(qapp):
+def window(qapp: QApplication) -> Iterator[MainWindow]:
     window = MainWindow()
     yield window
     window.close()
     window.deleteLater()
 
 
-def ok(check_type: CheckType, at: float, latency_ms: float, **fields) -> CheckResult:
+def ok(check_type: CheckType, at: float, latency_ms: float, **fields: Any) -> CheckResult:
     return CheckResult(
         check_type=check_type,
         success=True,
@@ -119,7 +125,7 @@ def ok(check_type: CheckType, at: float, latency_ms: float, **fields) -> CheckRe
     )
 
 
-def failed(check_type: CheckType, at: float, message: str, **fields) -> CheckResult:
+def failed(check_type: CheckType, at: float, message: str, **fields: Any) -> CheckResult:
     return CheckResult(
         check_type=check_type,
         success=False,
@@ -250,13 +256,15 @@ def assert_height_fits_content(window: MainWindow) -> None:
     content = window._rows_widget
     visible = [child for child in content.findChildren(QWidget) if child.isVisible()]
     bottom = max(child.mapTo(window, QPoint(0, child.height())).y() for child in visible)
-    bottom_margin = content.layout().contentsMargins().bottom()
+    layout = content.layout()
+    assert layout is not None
+    bottom_margin = layout.contentsMargins().bottom()
     assert bottom <= window.height() <= bottom + bottom_margin + 4
     assert abs(window.height() - window.content_height(window.width())) <= 4
 
 
 class TestMainWindow:
-    def test_rows_show_names_latency_labels_and_routes(self, window):
+    def test_rows_show_names_latency_labels_and_routes(self, window: MainWindow) -> None:
         window.show_snapshot(snapshot())
 
         headers = [endpoint_row.header for endpoint_row in window.endpoint_rows]
@@ -275,7 +283,7 @@ class TestMainWindow:
         ]
         assert [header.route.text() for header in headers] == ["", "via eth0", "", ""]
 
-    def test_chain_header_and_indented_hops(self, window):
+    def test_chain_header_and_indented_hops(self, window: MainWindow) -> None:
         window.show_snapshot(snapshot())
 
         [header] = window.chain_headers
@@ -292,11 +300,12 @@ class TestMainWindow:
         ],
     )
     def test_chain_status_ends_where_the_latency_of_the_hops_ends(
-        self, window, broken_at, wiki_name, status
-    ):
+        self, window: MainWindow, broken_at: int | None, wiki_name: str, status: str
+    ) -> None:
         with_chain = snapshot()
         [chain] = with_chain.chains
         wiki_result = ok(CheckType.ICMP, T, 30.0) if broken_at is None else chain.hops[1].current
+        assert wiki_result is not None
         wiki = row("203.0.113.5", wiki_name, [layer(wiki_result)])
         chain = replace(chain, hops=(chain.hops[0], wiki), broken_at=broken_at)
         window.show_snapshot(replace(with_chain, chains=(chain,)))
@@ -306,7 +315,7 @@ class TestMainWindow:
         [header] = window.chain_headers
         assert header.status.text() == status
 
-        def right_edge(label) -> int:
+        def right_edge(label: QWidget) -> int:
             return label.mapTo(window, QPoint(label.width(), 0)).x()
 
         for hop in window.endpoint_rows[2:]:
@@ -315,12 +324,14 @@ class TestMainWindow:
         assert header.status.width() >= text_width, "the status is not cut"
         assert header.status.alignment() & Qt.AlignmentFlag.AlignRight
 
-    def test_rows_and_problems_share_one_scroll_area_without_a_splitter(self, window):
+    def test_rows_and_problems_share_one_scroll_area_without_a_splitter(
+        self, window: MainWindow
+    ) -> None:
         window.show_snapshot(snapshot())
 
         assert window.findChildren(QSplitter) == []
 
-    def test_problems_are_listed_right_below_the_last_row(self, window):
+    def test_problems_are_listed_right_below_the_last_row(self, window: MainWindow) -> None:
         window.show_snapshot(snapshot())
         window.show()
         QApplication.processEvents()
@@ -336,13 +347,15 @@ class TestMainWindow:
         problems_top = window.problems_section.mapTo(window, QPoint(0, 0)).y()
         assert last_row_bottom <= problems_top < last_row_bottom + 40
 
-    def test_problems_are_hidden_while_there_are_none(self, window):
+    def test_problems_are_hidden_while_there_are_none(self, window: MainWindow) -> None:
         window.show_snapshot(snapshot_without_problems())
         window.show()
 
         assert not window.problems_section.isVisible()
 
-    def test_problems_coming_and_going_keep_the_rows_and_their_expanded_state(self, window):
+    def test_problems_coming_and_going_keep_the_rows_and_their_expanded_state(
+        self, window: MainWindow
+    ) -> None:
         window.show_snapshot(snapshot())
         window.show()
         intranet = window.endpoint_rows[1]
@@ -356,7 +369,7 @@ class TestMainWindow:
         assert window.endpoint_rows[1] is intranet
         assert intranet.is_expanded()
 
-    def test_graph_paints_the_shared_cells_of_the_primary_layer(self, window):
+    def test_graph_paints_the_shared_cells_of_the_primary_layer(self, window: MainWindow) -> None:
         window.show_snapshot(snapshot())
 
         router = window.endpoint_rows[0]
@@ -364,7 +377,7 @@ class TestMainWindow:
         assert primary is not None
         assert router.graph.cells() == classify_cells(primary.results())
 
-    def test_click_expands_one_graph_per_layer_in_probe_order(self, window):
+    def test_click_expands_one_graph_per_layer_in_probe_order(self, window: MainWindow) -> None:
         window.show_snapshot(snapshot())
         window.show()
         intranet = window.endpoint_rows[1]
@@ -385,7 +398,7 @@ class TestMainWindow:
         QTest.mouseClick(intranet.header, Qt.MouseButton.LeftButton)
         assert not intranet.is_expanded()
 
-    def test_click_on_a_label_or_the_graph_toggles_the_row(self, window):
+    def test_click_on_a_label_or_the_graph_toggles_the_row(self, window: MainWindow) -> None:
         window.show_snapshot(snapshot())
         window.show()
         hop = window.endpoint_rows[3]
@@ -402,7 +415,9 @@ class TestMainWindow:
         )
         assert not hop.is_expanded()
 
-    def test_next_snapshot_updates_the_same_rows_and_keeps_them_expanded(self, window):
+    def test_next_snapshot_updates_the_same_rows_and_keeps_them_expanded(
+        self, window: MainWindow
+    ) -> None:
         window.show_snapshot(snapshot())
         router = window.endpoint_rows[0]
         router.toggle_expanded()
@@ -414,7 +429,7 @@ class TestMainWindow:
         assert router.header.latency.text() == "150.0ms"
         assert router.layer_rows[LayerKey(CheckType.ICMP)].latency.text() == "150.0ms"
 
-    def test_refreshing_keeps_the_reference_count_of_none(self, window):
+    def test_refreshing_keeps_the_reference_count_of_none(self, window: MainWindow) -> None:
         # PySide6 6.12.0 drops a reference to None on every call that returns nothing, and Python
         # 3.11 aborts when the count reaches zero. This catches a version with that bug.
         # The warm-up fills Python's and Qt's caches first; even then, normal noise moves the count
@@ -427,7 +442,7 @@ class TestMainWindow:
             window.show_snapshot(snapshot())
         assert sys.getrefcount(None) >= before - 1000
 
-    def test_graph_columns_follow_the_window_width(self, window):
+    def test_graph_columns_follow_the_window_width(self, window: MainWindow) -> None:
         window.resize(600, 400)
         window.show()
         narrow = window.graph_columns(capacity=720)
@@ -437,20 +452,22 @@ class TestMainWindow:
         assert window.graph_columns(capacity=720) > narrow > 0
         assert window.graph_columns(capacity=3) == 3
 
-    def test_window_height_fits_its_content(self, window):
+    def test_window_height_fits_its_content(self, window: MainWindow) -> None:
         window.show_snapshot(snapshot())
         window.show()
 
         assert_height_fits_content(window)
 
-    def test_only_the_width_can_be_dragged(self, window):
+    def test_only_the_width_can_be_dragged(self, window: MainWindow) -> None:
         window.show_snapshot(snapshot())
         window.show()
 
         assert window.minimumHeight() == window.maximumHeight() == window.height()
         assert window.minimumWidth() < window.width() < window.maximumWidth()
 
-    def test_expanding_a_row_grows_the_window_and_collapsing_shrinks_it(self, window):
+    def test_expanding_a_row_grows_the_window_and_collapsing_shrinks_it(
+        self, window: MainWindow
+    ) -> None:
         window.show_snapshot(snapshot())
         window.show()
         collapsed = window.height()
@@ -464,7 +481,9 @@ class TestMainWindow:
         assert window.height() == collapsed
         assert_height_fits_content(window)
 
-    def test_problems_appearing_grow_the_window_and_disappearing_shrink_it(self, window):
+    def test_problems_appearing_grow_the_window_and_disappearing_shrink_it(
+        self, window: MainWindow
+    ) -> None:
         window.show_snapshot(snapshot_without_problems())
         window.show()
         without = window.height()
@@ -478,7 +497,7 @@ class TestMainWindow:
         assert window.height() == without
         assert_height_fits_content(window)
 
-    def test_a_wider_window_fits_the_rewrapped_problems(self, window):
+    def test_a_wider_window_fits_the_rewrapped_problems(self, window: MainWindow) -> None:
         window.show_snapshot(snapshot_with_a_long_problem())
         window.show()
         window.resize(window.minimumWidth(), window.height())
@@ -493,7 +512,7 @@ class TestMainWindow:
         assert window.height() < narrow
         assert_height_fits_content(window)
 
-    def test_many_rows_cap_the_height_at_the_screen_and_scroll(self, window):
+    def test_many_rows_cap_the_height_at_the_screen_and_scroll(self, window: MainWindow) -> None:
         window.show_snapshot(snapshot_with_many_rows(60))
         window.show()
         QApplication.processEvents()
@@ -504,7 +523,7 @@ class TestMainWindow:
         assert window.minimumHeight() == window.maximumHeight()
         assert window._rows_scroll.verticalScrollBar().isVisible()
 
-    def test_a_hidden_window_fits_its_content_when_shown(self, window):
+    def test_a_hidden_window_fits_its_content_when_shown(self, window: MainWindow) -> None:
         window.show_snapshot(snapshot())
         window.endpoint_rows[1].toggle_expanded()
 
@@ -516,7 +535,7 @@ class TestMainWindow:
 class TestGraphWidget:
     WIDTH = CELL_WIDTH * 12
 
-    def test_newest_bucket_is_painted_at_the_right_edge(self, qapp):
+    def test_newest_bucket_is_painted_at_the_right_edge(self, qapp: QApplication) -> None:
         graph = GraphWidget(height=24)
         graph.resize(self.WIDTH, 24)
         view = layer(ok(CheckType.ICMP, T - 5, 10.0), failed(CheckType.ICMP, T, "Timeout"))
@@ -534,7 +553,7 @@ class TestGraphWidget:
         # A 10 ms bar is low, so the top of its column stays unpainted.
         assert rgb(last_column - CELL_WIDTH, 1) != LATENCY_RGB[LatencyColor.GREEN]
 
-    def test_columns_map_to_buckets_from_the_right(self, qapp):
+    def test_columns_map_to_buckets_from_the_right(self, qapp: QApplication) -> None:
         graph = GraphWidget()
         graph.resize(self.WIDTH, 24)
         newest = ok(CheckType.ICMP, T, 10.0)
@@ -548,7 +567,7 @@ class TestGraphWidget:
 
 
 class TestBucketTooltip:
-    def test_failure_shows_the_error_and_the_counts(self):
+    def test_failure_shows_the_error_and_the_counts(self) -> None:
         result = failed(CheckType.TCP, T + 1, "Connection refused", port=443)
         bucket = Bucket(index=int(T // BUCKET), last=result, ok_count=2, failed_count=1)
 
@@ -557,12 +576,14 @@ class TestBucketTooltip:
         assert lines[0].endswith("FAIL (TCP)")
         assert lines[1:] == ["Connection refused", "2 OK, 1 failed in this bucket"]
 
-    def test_missing_bucket(self):
+    def test_missing_bucket(self) -> None:
         assert bucket_tooltip(None, BUCKET) == "No result"
 
 
 class TestGuiApp:
-    def test_without_a_top_bar_host_closing_the_window_quits(self, qapp, deadline):
+    def test_without_a_top_bar_host_closing_the_window_quits(
+        self, qapp: QApplication, deadline: Callable[[int], None]
+    ) -> None:
         # The tests' session bus doesn't exist (see conftest), so no host shows the item.
         # A listening socket accepts TCP connections in the kernel, without an accept() loop.
         with socket.socket() as server:
@@ -576,7 +597,7 @@ class TestGuiApp:
             gui = GuiApp(config, qapp)
             seen: list[str] = []
 
-            def close_once_measured():
+            def close_once_measured() -> None:
                 rows = gui.window.endpoint_rows
                 if rows and rows[0].header.latency.text().endswith("ms"):
                     seen.append(rows[0].header.label.text())
@@ -598,8 +619,8 @@ class TestGuiApp:
         assert not gui.tray.registered
 
     def test_with_a_top_bar_host_closing_hides_and_quit_in_the_menu_quits(
-        self, qapp, private_bus, deadline
-    ):
+        self, qapp: QApplication, private_bus: str, deadline: Callable[[int], None]
+    ) -> None:
         loop = LoopThread()
         watcher_bus, watcher = loop.run(start_watcher(private_bus))
         client = loop.run(connect(private_bus))
@@ -610,14 +631,17 @@ class TestGuiApp:
         gui = GuiApp(config, qapp, bus_address=private_bus)
         steps: list[str] = []
 
-        async def click_quit():
-            node = await client.introspect(gui.tray.unique_name, dbusmenu.OBJECT_PATH)
-            menu = client.get_proxy_object(
-                gui.tray.unique_name, dbusmenu.OBJECT_PATH, node
+        async def click_quit() -> None:
+            unique_name = gui.tray.unique_name
+            assert unique_name is not None
+            node = await client.introspect(unique_name, dbusmenu.OBJECT_PATH)
+            # Any: dbus-fast generates the proxy's call_* members at runtime.
+            menu: Any = client.get_proxy_object(
+                unique_name, dbusmenu.OBJECT_PATH, node
             ).get_interface(dbusmenu.INTERFACE)
             await menu.call_event(2, "clicked", Variant("s", ""), 0)
 
-        def step():
+        def step() -> None:
             if not steps and gui.window.isVisible() and gui.window.hide_on_close:
                 gui.window.close()
                 steps.append("closed")
@@ -645,8 +669,8 @@ class TestGuiApp:
         assert gui.engine._thread is None
 
     def test_top_bar_item_updates_at_most_every_tray_refresh_seconds(
-        self, qapp, private_bus, deadline
-    ):
+        self, qapp: QApplication, private_bus: str, deadline: Callable[[int], None]
+    ) -> None:
         tray_refresh_seconds = 0.5
         loop = LoopThread()
         watcher_bus, watcher = loop.run(start_watcher(private_bus))
@@ -666,16 +690,17 @@ class TestGuiApp:
             tray_updated_at: list[float] = []
             show_snapshot, update = gui.window.show_snapshot, gui.tray.update
 
-            def recording_show_snapshot(snapshot):
+            def recording_show_snapshot(snapshot: EngineSnapshot) -> None:
                 refreshed_at.append(time.monotonic())
                 show_snapshot(snapshot)
 
-            def recording_update(status):
+            def recording_update(status: TrayStatus) -> None:
                 tray_updated_at.append(time.monotonic())
                 update(status)
 
-            gui.window.show_snapshot = recording_show_snapshot
-            gui.tray.update = recording_update
+            # Wraps the bound methods on these instances; mypy forbids assigning to a method.
+            gui.window.show_snapshot = recording_show_snapshot  # type: ignore[method-assign]
+            gui.tray.update = recording_update  # type: ignore[method-assign]
             stop = QTimer()
             stop.setSingleShot(True)
             stop.timeout.connect(gui.quit)
@@ -700,11 +725,15 @@ class TestGuiApp:
         assert 3 <= len(tray_updated_at) <= elapsed / tray_refresh_seconds + 1
 
     def test_hidden_without_a_top_bar_host_shows_the_window_after_the_grace_period(
-        self, qapp, private_bus, deadline, short_grace
-    ):
+        self,
+        qapp: QApplication,
+        private_bus: str,
+        deadline: Callable[[int], None],
+        short_grace: None,
+    ) -> None:
         gui = GuiApp(HIDDEN_CONFIG, qapp, bus_address=private_bus, hidden=True)
         started = time.monotonic()
-        seen: list = []
+        seen: list[tuple[str, bool]] = []
 
         def step() -> bool:
             if not seen:
@@ -718,10 +747,14 @@ class TestGuiApp:
         assert seen == [("visible at start", False), ("shown", True)]
 
     def test_hidden_with_a_host_that_appears_late_stays_hidden(
-        self, qapp, private_bus, deadline, short_grace
-    ):
+        self,
+        qapp: QApplication,
+        private_bus: str,
+        deadline: Callable[[int], None],
+        short_grace: None,
+    ) -> None:
         loop = LoopThread()
-        watcher_buses = []
+        watcher_buses: list[MessageBus] = []
         gui = GuiApp(HIDDEN_CONFIG, qapp, bus_address=private_bus, hidden=True)
         steps: list[str] = []
         registered_at: list[float] = []
@@ -750,12 +783,16 @@ class TestGuiApp:
         assert steps == ["waiting", "registered"]
 
     def test_hidden_window_shows_when_the_host_stays_away_for_the_grace_period(
-        self, qapp, private_bus, deadline, short_grace
-    ):
+        self,
+        qapp: QApplication,
+        private_bus: str,
+        deadline: Callable[[int], None],
+        short_grace: None,
+    ) -> None:
         loop = LoopThread()
         watcher_bus, _ = loop.run(start_watcher(private_bus))
         gui = GuiApp(HIDDEN_CONFIG, qapp, bus_address=private_bus, hidden=True)
-        steps: list = []
+        steps: list[tuple[str, bool]] = []
         left_at: list[float] = []
 
         def step() -> bool:
@@ -776,8 +813,12 @@ class TestGuiApp:
         assert steps == [("visible at start", False), ("shown after the grace period", True)]
 
     def test_hidden_window_stays_hidden_when_the_host_comes_back_in_time(
-        self, qapp, private_bus, deadline, short_grace
-    ):
+        self,
+        qapp: QApplication,
+        private_bus: str,
+        deadline: Callable[[int], None],
+        short_grace: None,
+    ) -> None:
         loop = LoopThread()
         first_bus, _ = loop.run(start_watcher(private_bus))
         watcher_buses = [first_bus]
@@ -812,8 +853,12 @@ class TestGuiApp:
         assert steps == ["left", "back", "registered"]
 
     def test_hidden_with_a_host_and_a_second_start_shows_the_window(
-        self, qapp, private_bus, tmp_path, deadline
-    ):
+        self,
+        qapp: QApplication,
+        private_bus: str,
+        tmp_path: Path,
+        deadline: Callable[[int], None],
+    ) -> None:
         loop = LoopThread()
         watcher_bus, watcher = loop.run(start_watcher(private_bus))
         config_file = tmp_path / "settings.toml"
@@ -822,9 +867,9 @@ class TestGuiApp:
         gui = GuiApp(config, qapp, bus_address=private_bus, hidden=True)
         tokens: list[str] = []
         gui._bridge.open_requested.connect(tokens.append)
-        steps: list = []
+        steps: list[tuple[str, bool] | tuple[str, int, str]] = []
 
-        def second_start():
+        def second_start() -> None:
             steps.append(("visible at start", gui.window.isVisible()))
             env = dict(
                 os.environ,
@@ -843,7 +888,7 @@ class TestGuiApp:
             )
             steps.append(("second exit code", second.returncode, second.stderr.strip()))
 
-        def quit_once_shown():
+        def quit_once_shown() -> None:
             if gui.window.isVisible():
                 gui.quit()
 
@@ -869,7 +914,7 @@ class TestGuiApp:
         assert watcher.items == [gui.tray.unique_name]
 
 
-def test_application_icon_loads_from_the_packaged_svg(qapp):
+def test_application_icon_loads_from_the_packaged_svg(qapp: QApplication) -> None:
     icon = gui_app.application_icon()
 
     assert not icon.isNull()

@@ -1,6 +1,8 @@
 import os
 import shutil
 import subprocess
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -20,7 +22,7 @@ _PRIVATE_BUS_CONFIG = """<busconfig>
 
 
 @pytest.fixture(autouse=True, scope="session")
-def no_session_bus(tmp_path_factory):
+def no_session_bus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     """Point the session bus at a socket that doesn't exist, so no test reaches the user's own
     session bus by accident. Tests that need a bus use ``private_bus``."""
     previous = os.environ.get("DBUS_SESSION_BUS_ADDRESS")
@@ -34,7 +36,7 @@ def no_session_bus(tmp_path_factory):
 
 
 @pytest.fixture
-def private_bus(tmp_path):
+def private_bus(tmp_path: Path) -> Iterator[str]:
     """Run a private ``dbus-daemon`` for one test and return its address."""
     daemon = shutil.which("dbus-daemon")
     if daemon is None:

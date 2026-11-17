@@ -27,7 +27,7 @@ def result(started_at: float, finished_at: float, latency_ms: float | None = 10.
 
 
 class TestLayerHistory:
-    def test_last_result_wins_within_a_bucket(self):
+    def test_last_result_wins_within_a_bucket(self) -> None:
         history = LayerHistory(bucket_seconds=5.0)
         history.apply(result(100.0, 100.2, latency_ms=10.0))
         history.apply(result(101.0, 101.2, latency_ms=20.0))
@@ -38,7 +38,7 @@ class TestLayerHistory:
         assert (bucket.ok_count, bucket.failed_count) == (2, 1)
         assert history.latest is bucket.last
 
-    def test_result_from_an_older_probe_is_dropped(self):
+    def test_result_from_an_older_probe_is_dropped(self) -> None:
         history = LayerHistory(bucket_seconds=5.0)
         newer = result(101.0, 101.1, latency_ms=20.0)
         slow_older = result(100.0, 104.0, latency_ms=3000.0)
@@ -51,7 +51,7 @@ class TestLayerHistory:
         assert bucket.last is newer
         assert (bucket.ok_count, bucket.failed_count) == (1, 0)
 
-    def test_equal_start_times_are_both_kept(self):
+    def test_equal_start_times_are_both_kept(self) -> None:
         # Two chains writing the same DNS layer (the TCP 80 and 443 chains of a domain) can start
         # in the same instant.
         history = LayerHistory(bucket_seconds=5.0)
@@ -60,7 +60,7 @@ class TestLayerHistory:
         assert history.apply(first) and history.apply(second)
         assert history.latest is second
 
-    def test_bucket_boundaries_follow_finished_at(self):
+    def test_bucket_boundaries_follow_finished_at(self) -> None:
         history = LayerHistory(bucket_seconds=5.0)
         # Started in bucket 20 (100-104.99), finished in bucket 21.
         history.apply(result(104.0, 105.0))
@@ -70,7 +70,7 @@ class TestLayerHistory:
         assert buckets[0] is None
         assert buckets[1] is not None and buckets[1].index == 21
 
-    def test_buckets_are_aligned_to_the_epoch(self):
+    def test_buckets_are_aligned_to_the_epoch(self) -> None:
         # Two histories started at different times share the same column boundaries.
         a = LayerHistory(bucket_seconds=5.0)
         b = LayerHistory(bucket_seconds=5.0)
@@ -82,7 +82,7 @@ class TestLayerHistory:
         assert a_view[0] is not None and b_view[0] is not None
         assert a_view[0].index == b_view[0].index == 20
 
-    def test_ring_drops_buckets_past_capacity(self):
+    def test_ring_drops_buckets_past_capacity(self) -> None:
         history = LayerHistory(bucket_seconds=1.0, capacity=3)
         for second in range(5):
             history.apply(result(float(second), second + 0.1))
@@ -94,14 +94,16 @@ class TestLayerHistory:
         ("history_seconds", "bucket_seconds", "capacity"),
         [(3600, 5.0, 720), (3600, 3.0, 1200), (3600, 7.0, 515), (60, 5.0, 12), (5, 5.0, 1)],
     )
-    def test_capacity_covers_the_history(self, history_seconds, bucket_seconds, capacity):
+    def test_capacity_covers_the_history(
+        self, history_seconds: int, bucket_seconds: float, capacity: int
+    ) -> None:
         assert history_capacity(history_seconds, bucket_seconds) == capacity
         store = BucketStore(1, bucket_seconds, history_seconds)
         assert store.capacity == capacity
         assert store.endpoints[0].layer(LayerKey(CheckType.TCP, 443)).capacity == capacity
 
     @pytest.mark.parametrize("bucket_seconds", [5.0, 3.0, 7.0])
-    def test_default_history_drops_buckets_older_than_one_hour(self, bucket_seconds):
+    def test_default_history_drops_buckets_older_than_one_hour(self, bucket_seconds: float) -> None:
         history = LayerHistory(bucket_seconds=bucket_seconds)
         capacity = math.ceil(3600 / bucket_seconds)
         assert history.capacity == capacity
@@ -117,7 +119,7 @@ class TestLayerHistory:
         assert kept[0].index == buckets - capacity
         assert kept[-1].index == buckets - 1
 
-    def test_view_pads_to_the_requested_columns(self):
+    def test_view_pads_to_the_requested_columns(self) -> None:
         history = LayerHistory(bucket_seconds=5.0)
         history.apply(result(100.0, 100.1))
 
@@ -126,10 +128,10 @@ class TestLayerHistory:
         assert view[:7] == (None,) * 7
         assert view[7] is not None
 
-    def test_view_of_an_empty_history(self):
+    def test_view_of_an_empty_history(self) -> None:
         assert LayerHistory(bucket_seconds=5.0).view(now=100.0, columns=4) == (None,) * 4
 
-    def test_result_landing_in_an_older_bucket_after_a_clock_step(self):
+    def test_result_landing_in_an_older_bucket_after_a_clock_step(self) -> None:
         history = LayerHistory(bucket_seconds=5.0)
         history.apply(result(100.0, 106.0))
         # The clock stepped back: a later probe finishes with an earlier wall time.
@@ -141,7 +143,7 @@ class TestLayerHistory:
 
 
 class TestBucketStore:
-    def test_apply_creates_the_layer_on_first_result(self):
+    def test_apply_creates_the_layer_on_first_result(self) -> None:
         store = BucketStore(endpoint_count=2, bucket_seconds=5.0)
         store.apply(1, [result(100.0, 100.1)])
 
@@ -149,7 +151,7 @@ class TestBucketStore:
         assert LayerKey(CheckType.ICMP) in store.endpoints[1].layers
         assert store.endpoints[1].layers[LayerKey(CheckType.ICMP)].latest is not None
 
-    def test_tcp_results_are_kept_per_port(self):
+    def test_tcp_results_are_kept_per_port(self) -> None:
         def tcp(port: int, started_at: float) -> CheckResult:
             return CheckResult(
                 check_type=CheckType.TCP,
@@ -166,5 +168,9 @@ class TestBucketStore:
 
         layers = store.endpoints[0].layers
         assert set(layers) == {LayerKey(CheckType.TCP, 80), LayerKey(CheckType.TCP, 443)}
-        assert layers[LayerKey(CheckType.TCP, 80)].latest.port == 80
-        assert layers[LayerKey(CheckType.TCP, 443)].latest.port == 443
+        latest_80 = layers[LayerKey(CheckType.TCP, 80)].latest
+        latest_443 = layers[LayerKey(CheckType.TCP, 443)].latest
+        assert latest_80 is not None
+        assert latest_443 is not None
+        assert latest_80.port == 80
+        assert latest_443.port == 443

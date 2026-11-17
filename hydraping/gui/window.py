@@ -265,7 +265,11 @@ class ChainHeader(_Columns):
         self.status.setStyleSheet(_color_style(color))
 
 
-def _structure(snapshot: EngineSnapshot) -> tuple:
+# Row names, then each chain's name with its hop names.
+_Structure = tuple[tuple[str, ...], tuple[tuple[str, tuple[str, ...]], ...]]
+
+
+def _structure(snapshot: EngineSnapshot) -> _Structure:
     """Return what decides the window's rows. The rows are rebuilt only when it changes."""
     return (
         tuple(row.endpoint.display_name for row in snapshot.rows),
@@ -324,7 +328,7 @@ class MainWindow(QMainWindow):
 
         self.endpoint_rows: list[EndpointRow] = []
         self.chain_headers: list[ChainHeader] = []
-        self._structure: tuple | None = None
+        self._structure: _Structure | None = None
         self._show_problems([])
         self._update_minimum_width()
         self.fit_height()

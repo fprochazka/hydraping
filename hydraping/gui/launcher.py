@@ -69,7 +69,7 @@ def install(executable: Path, config: Path | None) -> tuple[Path, Path]:
 
 def remove() -> tuple[Path | None, Path | None]:
     """Delete the launcher and the icon, and return the paths of those that existed."""
-    removed = tuple(_unlink(path) for path in (entry_path(), icon_path()))
+    removed = (_unlink(entry_path()), _unlink(icon_path()))
     update_caches()
     return removed
 

@@ -7,6 +7,7 @@ import os
 import re
 import time
 from io import StringIO
+from pathlib import Path
 
 import pytest
 from rich.console import Console
@@ -46,31 +47,31 @@ class TestParseGoDuration:
         ("text", "expected"),
         [("23ms", 23.0), ("1.204s", 1204.0), ("0s", 0.0), ("1m2.5s", 62500.0), ("750µs", 0.75)],
     )
-    def test_durations(self, text, expected):
+    def test_durations(self, text: str, expected: float) -> None:
         assert parse_go_duration_ms(text) == pytest.approx(expected)
 
     @pytest.mark.parametrize("text", ["", "23", "ms", "fast", "23ms!"])
-    def test_anything_else_is_none(self, text):
+    def test_anything_else_is_none(self, text: str) -> None:
         assert parse_go_duration_ms(text) is None
 
 
 class TestParsePong:
-    def test_direct(self):
+    def test_direct(self) -> None:
         assert parse_pong(DIRECT) == TailscalePong(
             node="jumpbox", node_ip="192.0.2.7", latency_ms=23.0, relay=None
         )
 
-    def test_peer_api_port_is_not_part_of_the_address(self):
+    def test_peer_api_port_is_not_part_of_the_address(self) -> None:
         pong = parse_pong(WITH_PEER_API_PORT)
         assert pong is not None and pong.node_ip == "192.0.2.7" and pong.relay is None
 
-    def test_other_lines_are_not_replies(self):
+    def test_other_lines_are_not_replies(self) -> None:
         assert parse_pong("direct connection not established") is None
         assert parse_pong('ping "192.0.2.7" timed out') is None
 
 
 class TestParseTailscalePing:
-    def test_direct_path(self):
+    def test_direct_path(self) -> None:
         result = parse_tailscale_ping(DIRECT, 0)
 
         assert result.check_type == CheckType.TAILSCALE
@@ -78,18 +79,18 @@ class TestParseTailscalePing:
         assert result.relay is None
         assert result.resolved_ip == "192.0.2.7"
 
-    def test_direct_path_over_ipv6_with_seconds(self):
+    def test_direct_path_over_ipv6_with_seconds(self) -> None:
         result = parse_tailscale_ping(DIRECT_IPV6, 0)
         assert result.success and result.latency_ms == pytest.approx(1204.0)
         assert result.relay is None
 
-    def test_derp_relay_is_a_success_despite_the_exit_status(self):
+    def test_derp_relay_is_a_success_despite_the_exit_status(self) -> None:
         result = parse_tailscale_ping(DERP_RELAY, 1)
 
         assert result.success and result.latency_ms == 45.0
         assert result.relay == "DERP xyz"
 
-    def test_peer_relay(self):
+    def test_peer_relay(self) -> None:
         result = parse_tailscale_ping(PEER_RELAY, 0)
         assert result.success and result.relay == "peer relay"
 
@@ -103,7 +104,7 @@ class TestParseTailscalePing:
             ("", "tailscale ping exited with status 1 without output"),
         ],
     )
-    def test_failures(self, output, error):
+    def test_failures(self, output: str, error: str) -> None:
         result = parse_tailscale_ping(output, 1)
 
         assert result.check_type == CheckType.TAILSCALE
@@ -121,7 +122,7 @@ def fake_tailscale(script: str) -> tuple[str, ...]:
 
 
 class TestTailscaleChecker:
-    async def test_reply_is_parsed_and_the_node_ip_kept(self):
+    async def test_reply_is_parsed_and_the_node_ip_kept(self) -> None:
         checker = TailscaleChecker(timeout=2.0, command=fake_tailscale(f"printf '{DERP_RELAY}'"))
 
         result = await checker.check("jumpbox")
@@ -129,7 +130,7 @@ class TestTailscaleChecker:
         assert result.success and result.relay == "DERP xyz"
         assert checker.get_last_node_ip("jumpbox") == "192.0.2.7"
 
-    async def test_arguments(self, tmp_path):
+    async def test_arguments(self, tmp_path: Path) -> None:
         args_file = tmp_path / "args"
         script = f'printf "%s\\n" "$@" > {args_file}; printf \'{DIRECT}\''
         checker = TailscaleChecker(timeout=0.5, command=fake_tailscale(script))
@@ -145,7 +146,7 @@ class TestTailscaleChecker:
             "jumpbox.example.ts.net",
         ]
 
-    async def test_stops_at_the_reply_without_waiting_for_the_exit(self):
+    async def test_stops_at_the_reply_without_waiting_for_the_exit(self) -> None:
         # tailscale idles for a second after a relayed reply; the check must not wait for it.
         script = f"printf '{DERP_RELAY}'; exec sleep 10"
         checker = TailscaleChecker(timeout=5.0, command=fake_tailscale(script))
@@ -156,7 +157,7 @@ class TestTailscaleChecker:
         assert result.success
         assert time.monotonic() - started < 2.0
 
-    async def test_error_output(self):
+    async def test_error_output(self) -> None:
         script = f"printf '{NO_MATCHING_PEER}'; exit 1"
         checker = TailscaleChecker(timeout=2.0, command=fake_tailscale(script))
 
@@ -165,7 +166,7 @@ class TestTailscaleChecker:
         assert not result.success and result.error_message == "no matching peer"
         assert checker.get_last_node_ip("jumpbox") is None
 
-    async def test_no_output_in_time_is_a_timeout(self):
+    async def test_no_output_in_time_is_a_timeout(self) -> None:
         checker = TailscaleChecker(timeout=0.2, command=fake_tailscale("exec sleep 10"))
 
         started = time.monotonic()
@@ -174,7 +175,7 @@ class TestTailscaleChecker:
         assert not result.success and result.error_message == "No reply within 0.2s"
         assert time.monotonic() - started < 2.0
 
-    async def test_output_closed_without_an_exit_is_a_timeout(self):
+    async def test_output_closed_without_an_exit_is_a_timeout(self) -> None:
         # The output ends, but the process lingers: waiting for its exit has the timeout too.
         checker = TailscaleChecker(timeout=0.2, command=fake_tailscale("exec sleep 10 >&- 2>&-"))
 
@@ -184,7 +185,7 @@ class TestTailscaleChecker:
         assert not result.success and result.error_message == "No reply within 0.2s"
         assert time.monotonic() - started < 2.0
 
-    async def test_missing_cli(self, tmp_path):
+    async def test_missing_cli(self, tmp_path: Path) -> None:
         checker = TailscaleChecker(command=(str(tmp_path / "tailscale"),))
 
         result = await checker.check("jumpbox")
@@ -192,7 +193,7 @@ class TestTailscaleChecker:
         assert not result.success
         assert result.error_message == f"{tmp_path / 'tailscale'} CLI not found"
 
-    async def test_cancel_kills_the_command(self):
+    async def test_cancel_kills_the_command(self) -> None:
         checker = TailscaleChecker(timeout=30.0, command=fake_tailscale("exec sleep 10"))
         task = asyncio.ensure_future(checker.check("jumpbox"))
         await asyncio.sleep(0.1)
@@ -205,7 +206,7 @@ class TestTailscaleChecker:
 
 
 class TestTailscaleHopConfig:
-    def load(self, tmp_path, target: str) -> Config:
+    def load(self, tmp_path: Path, target: str) -> Config:
         path = tmp_path / "settings.toml"
         path.write_text(f"version = 2\n[endpoints]\ntargets = [{target}]\n")
         return Config.load(path)
@@ -213,7 +214,7 @@ class TestTailscaleHopConfig:
     @pytest.mark.parametrize(
         "peer", ["jumpbox", "jumpbox.example.ts.net", "192.0.2.7", "2001:db8::7"]
     )
-    def test_peer_names_and_addresses(self, tmp_path, peer):
+    def test_peer_names_and_addresses(self, tmp_path: Path, peer: str) -> None:
         config = self.load(tmp_path, f'{{ url = "{peer}", check = "tailscale", name = "VPN" }}')
 
         [endpoint] = config.endpoints
@@ -241,7 +242,9 @@ class TestTailscaleHopConfig:
             ),
         ],
     )
-    def test_invalid_tailscale_hops_are_rejected(self, tmp_path, target, error):
+    def test_invalid_tailscale_hops_are_rejected(
+        self, tmp_path: Path, target: str, error: str
+    ) -> None:
         with pytest.raises(ValueError, match=re.escape(error)):
             self.load(tmp_path, target)
 
@@ -270,12 +273,13 @@ class TestEngineAndDashboard:
         return [line for line in lines if line.lstrip().startswith("VPN")]
 
     def render(self, engine: Engine) -> str:
-        console = Console(width=100, file=StringIO(), color_system=None)
+        output = StringIO()
+        console = Console(width=100, file=output, color_system=None)
         dashboard = Dashboard(engine, console=console)
         console.print(dashboard.render())
-        return console.file.getvalue()
+        return output.getvalue()
 
-    def test_one_tailscale_schedule_and_the_node_ip_for_the_interface(self):
+    def test_one_tailscale_schedule_and_the_node_ip_for_the_interface(self) -> None:
         engine = self.engine()
         try:
             assert [s.name for s in engine.schedules] == ["VPN tailscale"]
@@ -285,7 +289,7 @@ class TestEngineAndDashboard:
         finally:
             engine.resolver_executor.shutdown(wait=False)
 
-    def test_relayed_reply_shows_the_relay_in_place_of_the_interface(self):
+    def test_relayed_reply_shows_the_relay_in_place_of_the_interface(self) -> None:
         engine = self.engine()
         try:
             engine._interfaces = {0: "tailscale0"}
@@ -298,7 +302,7 @@ class TestEngineAndDashboard:
         finally:
             engine.resolver_executor.shutdown(wait=False)
 
-    def test_direct_reply_shows_the_interface(self):
+    def test_direct_reply_shows_the_interface(self) -> None:
         engine = self.engine()
         try:
             engine._interfaces = {0: "tailscale0"}
@@ -310,7 +314,7 @@ class TestEngineAndDashboard:
         finally:
             engine.resolver_executor.shutdown(wait=False)
 
-    def test_failure(self):
+    def test_failure(self) -> None:
         engine = self.engine()
         try:
             engine.store.apply(0, [tailscale_result(time.time(), None, success=False)])
@@ -330,7 +334,7 @@ TAILSCALE_PEER = os.environ.get("HYDRAPING_TEST_TAILSCALE_PEER", "")
 @pytest.mark.skipif(
     not TAILSCALE_PEER, reason="set HYDRAPING_TEST_TAILSCALE_PEER to a peer to ping it"
 )
-async def test_real_tailscale_ping_has_the_expected_shape():
+async def test_real_tailscale_ping_has_the_expected_shape() -> None:
     peer = TAILSCALE_PEER
     result = await TailscaleChecker(timeout=5.0).check(peer)
 

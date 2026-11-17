@@ -52,17 +52,17 @@ def skipped(check_type: CheckType, blocked_by: CheckResult) -> CheckResult:
 class TestLatencyGraph:
     """Test latency graph rendering."""
 
-    def test_empty_graph_renders_dots(self):
+    def test_empty_graph_renders_dots(self) -> None:
         """Test that empty graph renders with dots."""
         graph = LatencyGraph()
-        bucketed = [None] * 10
+        bucketed: list[CheckResult | None] = [None] * 10
 
         result = graph.render(bucketed)
         # Should be 10 dim dots
         assert len(result.plain) == 10
         assert "·" in result.plain
 
-    def test_successful_result_renders_bar(self):
+    def test_successful_result_renders_bar(self) -> None:
         """Test that successful check renders colored bar."""
         graph = LatencyGraph()
 
@@ -77,7 +77,7 @@ class TestLatencyGraph:
         # Green latency should use a block character
         assert any(c in rendered.plain for c in "▁▂▃▄▅▆▇█")
 
-    def test_failed_result_renders_exclamation(self):
+    def test_failed_result_renders_exclamation(self) -> None:
         """Test that failed check renders exclamation mark."""
         graph = LatencyGraph()
 
@@ -88,7 +88,7 @@ class TestLatencyGraph:
 
         assert "!" in rendered.plain
 
-    def test_gap_detection_small_gap_shows_errors(self):
+    def test_gap_detection_small_gap_shows_errors(self) -> None:
         """Test that small gaps show as exclamation marks."""
         graph = LatencyGraph()
 
@@ -103,7 +103,7 @@ class TestLatencyGraph:
         # Gap should be marked with exclamation marks
         assert "!" in rendered.plain
 
-    def test_gap_detection_large_gap_shows_dots(self):
+    def test_gap_detection_large_gap_shows_dots(self) -> None:
         """Test that large gaps show as dots to avoid noise."""
         graph = LatencyGraph()
 
@@ -122,22 +122,22 @@ class TestLatencyGraph:
 class TestFailureLetters:
     """A failed bucket names the layer that broke."""
 
-    def test_each_chain_layer_has_a_letter(self):
+    def test_each_chain_layer_has_a_letter(self) -> None:
         assert failure_char(failed(CheckType.DNS, "x")) == "D"
         assert failure_char(failed(CheckType.TCP, "x")) == "T"
         assert failure_char(failed(CheckType.TLS, "x")) == "S"
         assert failure_char(failed(CheckType.HTTP, "x")) == "H"
 
-    def test_checks_without_layers_keep_the_exclamation_mark(self):
+    def test_checks_without_layers_keep_the_exclamation_mark(self) -> None:
         assert failure_char(failed(CheckType.ICMP, "x")) == "!"
         assert failure_char(failed(CheckType.UDP, "x")) == "!"
 
-    def test_skipped_primary_layer_shows_the_layer_that_blocked_it(self):
+    def test_skipped_primary_layer_shows_the_layer_that_blocked_it(self) -> None:
         tcp = failed(CheckType.TCP, "refused")
         assert failure_char(skipped(CheckType.HTTP, tcp)) == "T"
         assert failure_char(skipped(CheckType.TLS, tcp)) == "T"
 
-    def test_graph_renders_the_letters_in_red(self):
+    def test_graph_renders_the_letters_in_red(self) -> None:
         dns = failed(CheckType.DNS, "NXDOMAIN")
         rendered = LatencyGraph().render([icmp_ok(5.0), dns, skipped(CheckType.HTTP, dns), None])
         assert rendered.plain[1:3] == "DD"
@@ -155,15 +155,16 @@ def _dashboard() -> Dashboard:
 
 
 def _render_lines(dashboard: Dashboard, width: int) -> list[str]:
-    dashboard.console = Console(width=width, file=StringIO(), color_system=None)
+    output = StringIO()
+    dashboard.console = Console(width=width, file=output, color_system=None)
     dashboard.console.print(dashboard.render())
-    return dashboard.console.file.getvalue().splitlines()
+    return output.getvalue().splitlines()
 
 
 class TestDashboardWidth:
     """Test that the dashboard follows the console width on every frame."""
 
-    def test_same_dashboard_follows_resize(self):
+    def test_same_dashboard_follows_resize(self) -> None:
         dashboard = _dashboard()
 
         narrow = _render_lines(dashboard, 80)
@@ -178,7 +179,7 @@ class TestDashboardWidth:
 
         assert graph_width(wide) - graph_width(narrow) == 60
 
-    def test_long_name_shrinks_before_the_graph(self):
+    def test_long_name_shrinks_before_the_graph(self) -> None:
         endpoint = Endpoint.parse("192.0.2.1")
         endpoint.custom_name = "jumpbox.example.internal-ssh22"  # 30 characters
         engine = Engine(Config(endpoints=[endpoint]))
@@ -194,21 +195,22 @@ class TestDashboardWidth:
         assert len(graph) == 20
         assert graph[-1] in LatencyGraph.BLOCKS[1:], "the newest bucket is the rightmost cell"
 
-    def test_narrow_terminal_shows_message_instead_of_raising(self):
+    def test_narrow_terminal_shows_message_instead_of_raising(self) -> None:
         lines = _render_lines(_dashboard(), 50)
 
         # The names shrink to the 10-column floor: 10 + 27 fixed + 20 graph = 57.
         assert lines == ["Terminal too narrow: 50 columns, needs 57"]
 
-    def test_narrow_message_fits_on_one_line(self):
+    def test_narrow_message_fits_on_one_line(self) -> None:
         lines = _render_lines(_dashboard(), 30)
 
         assert len(lines) == 1
         assert cell_len(lines[0]) <= 30
 
-    def test_stopped_run_prints_last_frame(self):
+    def test_stopped_run_prints_last_frame(self) -> None:
         config = Config(endpoints=[Endpoint.parse("127.0.0.1")])
-        console = Console(width=80, file=StringIO(), force_terminal=True, color_system=None)
+        stream = StringIO()
+        console = Console(width=80, file=stream, force_terminal=True, color_system=None)
         dashboard = Dashboard(Engine(config), console=console)
 
         thread = threading.Thread(target=dashboard.run)
@@ -218,12 +220,12 @@ class TestDashboardWidth:
         thread.join(5.0)
         assert not thread.is_alive()
 
-        output = console.file.getvalue()
+        output = stream.getvalue()
         leave_alternate_screen = "\x1b[?1049l"
         assert "\x1b[?1049h" in output
         assert "127.0.0.1" in output.rpartition(leave_alternate_screen)[2]
 
-    def test_failed_current_result_shows_fail(self):
+    def test_failed_current_result_shows_fail(self) -> None:
         config = Config(endpoints=[Endpoint.parse("192.0.2.1")])
         engine = Engine(config)
         engine.store.apply(0, [icmp_failed()])
@@ -235,7 +237,7 @@ class TestDashboardWidth:
         assert row.rstrip().endswith("(ICMP)")
         assert any("192.0.2.1: ICMP: Timeout" in line for line in lines)
 
-    def test_skipped_primary_layer_names_the_layer_that_failed(self):
+    def test_skipped_primary_layer_names_the_layer_that_failed(self) -> None:
         config = Config(endpoints=[Endpoint.parse("https://example.com/")])
         engine = Engine(config)
         tcp = failed(CheckType.TCP, "Connection refused on port 443")
@@ -249,7 +251,7 @@ class TestDashboardWidth:
         problems = [line for line in lines if line.startswith("  •")]
         assert problems == ["  • https://example.com/: TCP: Connection refused on port 443"]
 
-    def test_five_digit_port_fits_the_protocol_column(self):
+    def test_five_digit_port_fits_the_protocol_column(self) -> None:
         config = Config(endpoints=[Endpoint.parse("127.0.0.1:65535")])
         engine = Engine(config)
         now = time.time()

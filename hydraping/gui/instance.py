@@ -44,7 +44,9 @@ def activation_token(platform_data: dict[str, Variant]) -> str | None:
     """Return the Wayland activation token from ``platform_data``, if it has one."""
     token = platform_data.get("activation-token")
     if isinstance(token, Variant) and token.signature == "s" and token.value:
-        return token.value
+        # Variant.value is Any; signature "s" means it holds a str.
+        value: str = token.value
+        return value
     return None
 
 

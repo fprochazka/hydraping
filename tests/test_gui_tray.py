@@ -1,21 +1,32 @@
 """The top-bar item on a private D-Bus daemon, read back by a client the way a host reads it."""
 
 import threading
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
 
 import pytest
 from dbus_fast import Message, MessageType, Variant
+from dbus_fast.aio import MessageBus
 
 from hydraping.gui import dbusmenu, instance
 from hydraping.gui.tray import INTERFACE, OBJECT_PATH, TrayService
 from hydraping.gui.tray_icon import ICON_SIZES
 from hydraping.gui.tray_status import INITIAL_STATUS, LABEL_GUIDE, IconBar, TrayStatus
-from tests.dbus_helpers import LoopThread, connect, disconnect, start_watcher, wait_until
+from tests.dbus_helpers import (
+    FakeWatcher,
+    LoopThread,
+    connect,
+    disconnect,
+    start_watcher,
+    wait_until,
+)
 
 
 class Calls:
     """Record the item's callbacks, which arrive on the item's thread."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.lock = threading.Lock()
         self.activated: list[str | None] = []
         self.quit = 0
@@ -35,14 +46,14 @@ class Calls:
 
 
 @pytest.fixture
-def loop():
+def loop() -> Iterator[LoopThread]:
     loop = LoopThread()
     yield loop
     loop.close()
 
 
 @pytest.fixture
-def watcher(private_bus, loop):
+def watcher(private_bus: str, loop: LoopThread) -> Iterator[FakeWatcher]:
     bus, watcher = loop.run(start_watcher(private_bus))
     yield watcher
     if bus.connected:
@@ -50,19 +61,19 @@ def watcher(private_bus, loop):
 
 
 @pytest.fixture
-def client(private_bus, loop):
+def client(private_bus: str, loop: LoopThread) -> Iterator[MessageBus]:
     bus = loop.run(connect(private_bus))
     yield bus
     loop.run(disconnect(bus))
 
 
 @pytest.fixture
-def calls():
+def calls() -> Calls:
     return Calls()
 
 
 @pytest.fixture
-def tray(private_bus, calls):
+def tray(private_bus: str, calls: Calls) -> Iterator[TrayService]:
     service = TrayService(
         on_activate=calls.on_activate,
         on_quit=calls.on_quit,
@@ -73,21 +84,26 @@ def tray(private_bus, calls):
     service.stop()
 
 
-async def _proxy(bus, name: str, path: str, interface: str):
+async def _proxy(bus: MessageBus, name: str, path: str, interface: str) -> Any:
+    # Any: dbus-fast generates the proxy's get_*/call_*/on_* members at runtime.
     node = await bus.introspect(name, path)
     return bus.get_proxy_object(name, path, node).get_interface(interface)
 
 
-def item(loop, client, tray):
+def item(loop: LoopThread, client: MessageBus, tray: TrayService) -> Any:
+    assert tray.unique_name is not None
     return loop.run(_proxy(client, tray.unique_name, OBJECT_PATH, INTERFACE))
 
 
-def menu(loop, client, tray):
+def menu(loop: LoopThread, client: MessageBus, tray: TrayService) -> Any:
+    assert tray.unique_name is not None
     return loop.run(_proxy(client, tray.unique_name, dbusmenu.OBJECT_PATH, dbusmenu.INTERFACE))
 
 
 class TestRegistration:
-    def test_registers_its_unique_name_with_the_watcher(self, watcher, tray, calls):
+    def test_registers_its_unique_name_with_the_watcher(
+        self, watcher: FakeWatcher, tray: TrayService, calls: Calls
+    ) -> None:
         tray.start()
 
         assert tray.registered
@@ -95,7 +111,9 @@ class TestRegistration:
         assert watcher.items == [tray.unique_name]
         assert calls.registered == [True]
 
-    def test_registers_again_when_a_new_watcher_appears(self, private_bus, loop, tray, calls):
+    def test_registers_again_when_a_new_watcher_appears(
+        self, private_bus: str, loop: LoopThread, tray: TrayService, calls: Calls
+    ) -> None:
         bus, first = loop.run(start_watcher(private_bus))
         tray.start()
         assert first.items == [tray.unique_name]
@@ -110,14 +128,18 @@ class TestRegistration:
         finally:
             loop.run(disconnect(bus))
 
-    def test_without_a_watcher_the_item_is_not_shown(self, private_bus, tray, calls):
+    def test_without_a_watcher_the_item_is_not_shown(
+        self, private_bus: str, tray: TrayService, calls: Calls
+    ) -> None:
         tray.start()
 
         assert not tray.registered
         assert (tray.error or "").startswith("no status notifier host on the session bus")
         assert calls.registered == []
 
-    def test_without_a_session_bus_the_item_is_not_shown(self, tmp_path, calls):
+    def test_without_a_session_bus_the_item_is_not_shown(
+        self, tmp_path: Path, calls: Calls
+    ) -> None:
         service = TrayService(
             on_activate=calls.on_activate,
             on_quit=calls.on_quit,
@@ -130,7 +152,9 @@ class TestRegistration:
         assert not service.registered
         assert (service.error or "").startswith("no session bus")
 
-    def test_stop_leaves_the_bus(self, watcher, tray, loop, client):
+    def test_stop_leaves_the_bus(
+        self, watcher: FakeWatcher, tray: TrayService, loop: LoopThread, client: MessageBus
+    ) -> None:
         tray.start()
         name = tray.unique_name
 
@@ -153,7 +177,9 @@ class TestRegistration:
 
 
 class TestItem:
-    def test_properties(self, watcher, tray, loop, client):
+    def test_properties(
+        self, watcher: FakeWatcher, tray: TrayService, loop: LoopThread, client: MessageBus
+    ) -> None:
         tray.start()
         proxy = item(loop, client, tray)
 
@@ -172,14 +198,17 @@ class TestItem:
         ]
         assert list(loop.run(proxy.get_tool_tip())) == ["", [], "HydraPing", ""]
 
-    def test_signatures_match_the_specification(self, watcher, tray, loop, client):
+    def test_signatures_match_the_specification(
+        self, watcher: FakeWatcher, tray: TrayService, loop: LoopThread, client: MessageBus
+    ) -> None:
         tray.start()
+        assert tray.unique_name is not None
         node = loop.run(client.introspect(tray.unique_name, OBJECT_PATH))
         [interface] = [i for i in node.interfaces if i.name == INTERFACE]
 
         properties = {p.name: p.signature for p in interface.properties}
-        methods = {m.name: "".join(a.signature for a in m.in_args) for m in interface.methods}
-        signals = {s.name: "".join(a.signature for a in s.args) for s in interface.signals}
+        methods = {m.name: m.in_signature for m in interface.methods}
+        signals = {s.name: s.signature for s in interface.signals}
 
         assert properties == {
             "Category": "s",
@@ -217,8 +246,13 @@ class TestItem:
         }
 
     def test_activate_opens_the_window_with_the_activation_token(
-        self, watcher, tray, loop, client, calls
-    ):
+        self,
+        watcher: FakeWatcher,
+        tray: TrayService,
+        loop: LoopThread,
+        client: MessageBus,
+        calls: Calls,
+    ) -> None:
         tray.start()
         proxy = item(loop, client, tray)
 
@@ -228,10 +262,12 @@ class TestItem:
 
         assert calls.activated == ["token-1", None]
 
-    def test_a_status_change_sends_the_changed_parts(self, watcher, tray, loop, client):
+    def test_a_status_change_sends_the_changed_parts(
+        self, watcher: FakeWatcher, tray: TrayService, loop: LoopThread, client: MessageBus
+    ) -> None:
         tray.start()
         proxy = item(loop, client, tray)
-        received: list[tuple] = []
+        received: list[tuple[str, ...]] = []
         proxy.on_x_ayatana_new_label(lambda label, guide: received.append(("label", label, guide)))
         proxy.on_new_icon(lambda: received.append(("icon",)))
         proxy.on_new_tool_tip(lambda: received.append(("tooltip",)))
@@ -250,7 +286,9 @@ class TestItem:
 
 
 class TestMenu:
-    def test_layout_lists_open_and_quit(self, watcher, tray, loop, client):
+    def test_layout_lists_open_and_quit(
+        self, watcher: FakeWatcher, tray: TrayService, loop: LoopThread, client: MessageBus
+    ) -> None:
         tray.start()
         proxy = menu(loop, client, tray)
 
@@ -263,7 +301,14 @@ class TestMenu:
         assert labels == [(1, "Open HydraPing"), (2, "Quit")]
         assert loop.run(proxy.get_version()) == dbusmenu.PROTOCOL_VERSION
 
-    def test_clicks_open_the_window_and_quit(self, watcher, tray, loop, client, calls):
+    def test_clicks_open_the_window_and_quit(
+        self,
+        watcher: FakeWatcher,
+        tray: TrayService,
+        loop: LoopThread,
+        client: MessageBus,
+        calls: Calls,
+    ) -> None:
         tray.start()
         proxy = menu(loop, client, tray)
 
@@ -276,7 +321,7 @@ class TestMenu:
 
 
 class TestSingleInstance:
-    def service(self, private_bus, calls) -> TrayService:
+    def service(self, private_bus: str, calls: Calls) -> TrayService:
         return TrayService(
             on_activate=calls.on_activate,
             on_quit=calls.on_quit,
@@ -285,7 +330,9 @@ class TestSingleInstance:
             bus_name=instance.BUS_NAME,
         )
 
-    def test_a_second_start_hands_the_activation_token_to_the_first(self, private_bus, watcher):
+    def test_a_second_start_hands_the_activation_token_to_the_first(
+        self, private_bus: str, watcher: FakeWatcher
+    ) -> None:
         first_calls, second_calls = Calls(), Calls()
         first = self.service(private_bus, first_calls)
         second = self.service(private_bus, second_calls)
@@ -306,7 +353,7 @@ class TestSingleInstance:
             second.stop()
             first.stop()
 
-    def test_the_name_is_free_again_after_stop(self, private_bus, calls):
+    def test_the_name_is_free_again_after_stop(self, private_bus: str, calls: Calls) -> None:
         first = self.service(private_bus, calls)
         first.start()
         first.stop()
@@ -317,7 +364,9 @@ class TestSingleInstance:
         finally:
             second.stop()
 
-    def test_activate_without_a_token(self, private_bus, loop, client, calls):
+    def test_activate_without_a_token(
+        self, private_bus: str, loop: LoopThread, client: MessageBus, calls: Calls
+    ) -> None:
         tray = self.service(private_bus, calls)
         try:
             tray.start()
@@ -331,7 +380,9 @@ class TestSingleInstance:
 
 
 class TestPlatformData:
-    def test_reads_the_launcher_tokens_from_the_environment(self, monkeypatch):
+    def test_reads_the_launcher_tokens_from_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("XDG_ACTIVATION_TOKEN", "wayland-token")
         monkeypatch.setenv("DESKTOP_STARTUP_ID", "x11-id")
 
@@ -343,7 +394,7 @@ class TestPlatformData:
         }
         assert instance.activation_token(data) == "wayland-token"
 
-    def test_without_tokens(self, monkeypatch):
+    def test_without_tokens(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("XDG_ACTIVATION_TOKEN", raising=False)
         monkeypatch.delenv("DESKTOP_STARTUP_ID", raising=False)
 

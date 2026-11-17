@@ -201,7 +201,8 @@ class ConnectionChecker:
         return measurement
 
     async def _getaddrinfo(self, host: str, ip_version: int | None) -> Measurement:
-        family = {4: socket.AF_INET, 6: socket.AF_INET6}.get(ip_version, socket.AF_UNSPEC)
+        families: dict[int | None, socket.AddressFamily] = {4: socket.AF_INET, 6: socket.AF_INET6}
+        family = families.get(ip_version, socket.AF_UNSPEC)
         lookup = functools.partial(
             socket.getaddrinfo,
             host,
@@ -225,7 +226,8 @@ class ConnectionChecker:
             check_type=CheckType.DNS,
             success=True,
             latency_ms=max(latency_ms, 0.0),
-            resolved_ip=infos[0][4][0],
+            # AF_INET and AF_INET6 sockaddrs start with the address string.
+            resolved_ip=str(infos[0][4][0]),
         )
 
     async def _connect(

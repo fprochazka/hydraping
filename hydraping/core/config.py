@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import dns.exception
 import dns.name
@@ -64,7 +65,7 @@ class ChecksConfig:
     history_seconds: float = DEFAULT_HISTORY_SECONDS
     http_success_status_max: int = 399  # HTTP status codes <= this are considered success
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for name in (
             "probe_interval_seconds",
             "bucket_seconds",
@@ -119,7 +120,7 @@ class UIConfig:
     graph_width: int = 0  # 0 means auto-size to terminal width
     tray_refresh_seconds: float = 5.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         value = self.tray_refresh_seconds
         if not isinstance(value, int | float) or isinstance(value, bool) or value <= 0:
             raise ValueError(f"ui.tray_refresh_seconds must be a positive number, got: {value!r}")
@@ -243,7 +244,7 @@ _ORDINARY_ONLY_KEYS = (
 )
 
 
-def _parse_check_endpoint(ep_config: dict, url: str) -> Endpoint:
+def _parse_check_endpoint(ep_config: dict[str, Any], url: str) -> Endpoint:
     """Parse an endpoint with a ``check`` key, which selects a special measurement."""
     check = ep_config["check"]
     if check not in ("dns", "tailscale"):
@@ -258,7 +259,7 @@ def _parse_check_endpoint(ep_config: dict, url: str) -> Endpoint:
     return _parse_dns_server_endpoint(ep_config, url)
 
 
-def _parse_dns_server_endpoint(ep_config: dict, url: str) -> DNSServerEndpoint:
+def _parse_dns_server_endpoint(ep_config: dict[str, Any], url: str) -> DNSServerEndpoint:
     zone = ep_config.get("query")
     if not isinstance(zone, str) or not zone.strip(". "):
         raise ValueError(
@@ -291,7 +292,7 @@ def _parse_dns_server_endpoint(ep_config: dict, url: str) -> DNSServerEndpoint:
 _TAILSCALE_PEER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
-def _parse_tailscale_endpoint(ep_config: dict, url: str) -> TailscalePeerEndpoint:
+def _parse_tailscale_endpoint(ep_config: dict[str, Any], url: str) -> TailscalePeerEndpoint:
     for key in ("query", "transport"):
         if key in ep_config:
             raise ValueError(f'\'{key}\' needs check = "dns", not check = "tailscale", on {url}')
@@ -486,7 +487,7 @@ _KNOWN_ENDPOINT_KEYS = {
 }
 
 
-def _reject_unknown_keys(data: dict, config_path: Path) -> None:
+def _reject_unknown_keys(data: dict[str, Any], config_path: Path) -> None:
     """Raise ValueError naming the first key that settings.toml does not support."""
 
     def unknown(key_path: str) -> ValueError:

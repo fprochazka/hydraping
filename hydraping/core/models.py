@@ -90,7 +90,7 @@ class Measurement:
     skipped: bool = False
     blocked_by: CheckType | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.success and self.latency_ms is None:
             raise ValueError("Successful check must have latency")
         if not self.success and self.error_message is None:
@@ -171,10 +171,10 @@ class Endpoint:
     # Whether the desktop GUI's top-bar item counts this target. Chain hops count as their chain.
     tray: bool = field(default=True, kw_only=True)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize endpoint type - to be overridden by subclasses."""
         if not hasattr(self, "endpoint_type"):
-            self.endpoint_type = None
+            self.endpoint_type: EndpointType | None = None
 
     @property
     def display_name(self) -> str:
@@ -183,6 +183,10 @@ class Endpoint:
         if self.custom_name:
             return self.custom_name
         return self.raw
+
+    def get_check_types(self) -> list[CheckType]:
+        """Return list of check types applicable to this endpoint."""
+        raise NotImplementedError
 
     def get_primary_check_type(self) -> CheckType:
         """Return the check type the graph and latency column show."""
@@ -263,7 +267,7 @@ class IPEndpoint(Endpoint):
 
     ip: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Set endpoint type."""
         self.endpoint_type = EndpointType.IP
 
@@ -283,7 +287,7 @@ class IPPortEndpoint(Endpoint):
     ip: str
     port: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Set endpoint type."""
         self.endpoint_type = EndpointType.IP_PORT
 
@@ -317,7 +321,7 @@ class UDPPortEndpoint(Endpoint):
     port: int
     probe_data: bytes = field(default=b"", kw_only=True)  # Custom UDP probe payload
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Set endpoint type."""
         self.endpoint_type = EndpointType.UDP_PORT
 
@@ -354,7 +358,7 @@ class DNSServerEndpoint(Endpoint):
     port: int = 53
     transport: str = "udp"  # "udp" or "tcp"
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.endpoint_type = EndpointType.DNS_SERVER
 
     def get_check_types(self) -> list[CheckType]:
@@ -375,7 +379,7 @@ class TailscalePeerEndpoint(Endpoint):
 
     peer: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.endpoint_type = EndpointType.TAILSCALE_PEER
 
     def get_check_types(self) -> list[CheckType]:
@@ -393,7 +397,7 @@ class DomainEndpoint(Endpoint):
     port: int = 80  # Default to HTTP port
     port_specified: bool = field(default=False, kw_only=True)  # Was port explicitly set?
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Set endpoint type."""
         self.endpoint_type = EndpointType.DOMAIN
 
@@ -448,7 +452,7 @@ class HTTPEndpoint(Endpoint):
     port: int
     path: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Set endpoint type."""
         self.endpoint_type = EndpointType.HTTP
 

@@ -1,5 +1,8 @@
 """What the top-bar item shows: rows, label, tooltip, icon pixels and the menu layout."""
 
+from collections.abc import Iterable
+from typing import Any
+
 from dbus_fast import Variant
 
 from hydraping.core.graphcells import LatencyColor
@@ -23,7 +26,7 @@ YELLOW = LATENCY_RGB[LatencyColor.YELLOW]
 RED = LATENCY_RGB[LatencyColor.RED]
 
 
-def ok(check_type: CheckType, latency_ms: float, **fields) -> CheckResult:
+def ok(check_type: CheckType, latency_ms: float, **fields: Any) -> CheckResult:
     return CheckResult(
         check_type=check_type,
         success=True,
@@ -34,7 +37,7 @@ def ok(check_type: CheckType, latency_ms: float, **fields) -> CheckResult:
     )
 
 
-def failed(check_type: CheckType, message: str = "Timeout", **fields) -> CheckResult:
+def failed(check_type: CheckType, message: str = "Timeout", **fields: Any) -> CheckResult:
     return CheckResult(
         check_type=check_type,
         success=False,
@@ -62,7 +65,9 @@ def chain(name: str, *hops: EndpointSnapshot, broken_at: int | None = None) -> C
     return ChainSnapshot(name=name, hops=hops, broken_at=broken_at, problems=())
 
 
-def snapshot(rows=(), chains=()) -> EngineSnapshot:
+def snapshot(
+    rows: Iterable[EndpointSnapshot] = (), chains: Iterable[ChainSnapshot] = ()
+) -> EngineSnapshot:
     return EngineSnapshot(
         taken_at=T,
         bucket_seconds=5.0,
@@ -87,7 +92,7 @@ def intranet(current: CheckResult | None) -> EndpointSnapshot:
 
 
 class TestRows:
-    def test_chains_first_then_targets_shown_in_the_tray(self):
+    def test_chains_first_then_targets_shown_in_the_tray(self) -> None:
         hidden = row("203.0.113.5", "Wiki", ok(CheckType.ICMP, 5.0), tray=False)
         company = chain("Company", jumpbox(ok(CheckType.TCP, 20.0, port=22)))
 
@@ -95,7 +100,7 @@ class TestRows:
 
         assert [r.name for r in rows] == ["Company", "Router"]
 
-    def test_chain_latency_is_the_last_hop_and_its_bar_the_slowest_hop(self):
+    def test_chain_latency_is_the_last_hop_and_its_bar_the_slowest_hop(self) -> None:
         company = chain(
             "Company",
             jumpbox(ok(CheckType.TCP, 120.0, port=22)),
@@ -108,7 +113,7 @@ class TestRows:
         assert company_row.latency_ms == 40.0
         assert company_row.worst_latency_ms == 120.0
 
-    def test_failed_target_is_down(self):
+    def test_failed_target_is_down(self) -> None:
         failure = failed(CheckType.TCP, port=22)
 
         [jumpbox_row] = tray_rows(snapshot(rows=[jumpbox(failure)]))
@@ -118,18 +123,18 @@ class TestRows:
 
 
 class TestLabel:
-    def test_no_rows_gives_no_label(self):
+    def test_no_rows_gives_no_label(self) -> None:
         assert tray_status(snapshot(rows=[router(tray=False)])).label == ""
 
-    def test_before_the_first_result(self):
+    def test_before_the_first_result(self) -> None:
         assert tray_status(snapshot(rows=[router(None)])).label == NO_DATA_LABEL
 
-    def test_slowest_latency(self):
+    def test_slowest_latency(self) -> None:
         slow = row("203.0.113.5", "Wiki", ok(CheckType.ICMP, 37.6))
 
         assert tray_status(snapshot(rows=[router(12.0), slow, router(None)])).label == "38 ms"
 
-    def test_failing_targets_are_counted(self):
+    def test_failing_targets_are_counted(self) -> None:
         down = [
             jumpbox(failed(CheckType.TCP, port=22)),
             row("203.0.113.5", "Wiki", failed(CheckType.ICMP)),
@@ -137,7 +142,7 @@ class TestLabel:
 
         assert tray_status(snapshot(rows=[router(), *down])).label == "2 down"
 
-    def test_broken_chain_names_its_broken_hop(self):
+    def test_broken_chain_names_its_broken_hop(self) -> None:
         company = chain(
             "Company",
             jumpbox(failed(CheckType.TCP, port=22)),
@@ -150,7 +155,7 @@ class TestLabel:
 
 
 class TestTooltip:
-    def test_one_line_per_row(self):
+    def test_one_line_per_row(self) -> None:
         company = chain(
             "Company",
             jumpbox(ok(CheckType.TCP, 20.0, port=22)),
@@ -170,7 +175,7 @@ class TestTooltip:
 
 
 class TestBars:
-    def test_one_bar_per_row_coloured_by_latency(self):
+    def test_one_bar_per_row_coloured_by_latency(self) -> None:
         rows = [router(12.0), router(70.0), jumpbox(failed(CheckType.TCP, port=22)), router(None)]
 
         bars = tray_status(snapshot(rows=rows)).bars
@@ -180,16 +185,16 @@ class TestBars:
         assert bars[0].height < bars[1].height < bars[2].height
         assert bars[3].height == bar_height(0.0)
 
-    def test_at_most_five_bars(self):
+    def test_at_most_five_bars(self) -> None:
         assert len(tray_status(snapshot(rows=[router()] * 7)).bars) == 5
 
-    def test_slower_latency_never_gets_a_shorter_bar(self):
+    def test_slower_latency_never_gets_a_shorter_bar(self) -> None:
         heights = [bar_height(ms) for ms in range(0, 600, 5)]
 
         assert heights == sorted(heights)
         assert heights[-1] < 1.0
 
-    def test_grey_bar_without_rows(self):
+    def test_grey_bar_without_rows(self) -> None:
         assert tray_status(snapshot()).bars == (IconBar(NO_DATA_RGB, bar_height(0.0)),)
 
 
@@ -199,7 +204,7 @@ def pixel(image: bytes, size: int, x: int, y: int) -> bytes:
 
 
 class TestIcon:
-    def test_sizes_and_argb_in_network_byte_order(self):
+    def test_sizes_and_argb_in_network_byte_order(self) -> None:
         pixmaps = icon_pixmaps([IconBar((0x11, 0x22, 0x33), 1.0)])
 
         assert [(width, height, len(data)) for width, height, data in pixmaps] == [
@@ -211,7 +216,7 @@ class TestIcon:
         # Outside the bars the icon is transparent.
         assert pixel(pixmaps[0][2], 22, 0, 0) == b"\x00\x00\x00\x00"
 
-    def test_bars_stand_side_by_side_on_the_bottom(self):
+    def test_bars_stand_side_by_side_on_the_bottom(self) -> None:
         bars = [IconBar(GREEN, 0.3), IconBar(YELLOW, 0.5), IconBar(RED, 1.0)]
         size = 22
 
@@ -219,7 +224,7 @@ class TestIcon:
 
         bottom_row = [pixel(image, size, x, size - 2) for x in range(size)]
         colours = [bytes((0xFF, *bar.rgb)) for bar in bars]
-        runs = []
+        runs: list[bytes] = []
         for value in bottom_row:
             if value != b"\x00\x00\x00\x00" and (not runs or runs[-1] != value):
                 runs.append(value)
@@ -239,7 +244,7 @@ class TestMenuLayout:
             ]
         )
 
-    def test_root_with_its_items(self):
+    def test_root_with_its_items(self) -> None:
         root_id, root_properties, children = self.make_menu([]).layout(0, -1, [])
 
         assert root_id == 0
@@ -250,7 +255,7 @@ class TestMenuLayout:
             (2, "Quit", []),
         ]
 
-    def test_depth_zero_and_property_filter(self):
+    def test_depth_zero_and_property_filter(self) -> None:
         menu = self.make_menu([])
 
         assert menu.layout(0, 0, []) == [0, {"children-display": Variant("s", "submenu")}, []]
@@ -258,12 +263,12 @@ class TestMenuLayout:
         assert root_properties == {}
         assert quit_item.value[1] == {"label": Variant("s", "Quit")}
 
-    def test_group_properties_skip_unknown_ids(self):
+    def test_group_properties_skip_unknown_ids(self) -> None:
         properties = self.make_menu([]).group_properties([2, 7], ["label", "enabled"])
 
         assert properties == [[2, {"label": Variant("s", "Quit"), "enabled": Variant("b", True)}]]
 
-    def test_clicked_runs_the_item_action(self):
+    def test_clicked_runs_the_item_action(self) -> None:
         clicks: list[str] = []
         menu = self.make_menu(clicks)
 

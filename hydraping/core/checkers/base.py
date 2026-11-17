@@ -1,6 +1,7 @@
 """Base checker class for all connectivity checks."""
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from hydraping.core.models import CheckType, Measurement
 
@@ -16,7 +17,7 @@ class BaseChecker(ABC):
         self.timeout = timeout
 
     @abstractmethod
-    async def check(self, target: str, **kwargs) -> Measurement:
+    async def check(self, *args: Any, **kwargs: Any) -> Measurement:
         """Measure ``target`` and return the outcome."""
 
     def _create_result(

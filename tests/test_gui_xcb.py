@@ -40,14 +40,14 @@ WAYLAND_SESSION = {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "wayland-0"
         "display-without-wayland-session",
     ],
 )
-def test_xcb_without_the_library_is_missing(environ):
+def test_xcb_without_the_library_is_missing(environ: dict[str, str]) -> None:
     can_load = Loader(present=False)
 
     assert missing_xcb_cursor(environ, can_load)
     assert can_load.asked == [XCB_CURSOR_LIBRARY]
 
 
-def test_xcb_with_the_library_is_not_missing():
+def test_xcb_with_the_library_is_not_missing() -> None:
     assert not missing_xcb_cursor(X11_SESSION, Loader(present=True))
 
 
@@ -61,13 +61,13 @@ def test_xcb_with_the_library_is_not_missing():
     ],
     ids=["wayland", "offscreen", "explicit-wayland", "minimal"],
 )
-def test_other_platforms_skip_the_check(environ):
+def test_other_platforms_skip_the_check(environ: dict[str, str]) -> None:
     can_load = Loader(present=False)
 
     assert not missing_xcb_cursor(environ, can_load)
     assert can_load.asked == []
 
 
-def test_can_load_library():
+def test_can_load_library() -> None:
     assert can_load_library("libc.so.6")
     assert not can_load_library("libhydraping-does-not-exist.so.0")

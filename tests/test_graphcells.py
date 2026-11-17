@@ -51,7 +51,9 @@ class TestBars:
             (5000.0, LatencyColor.RED, 7),
         ],
     )
-    def test_colour_zone_and_level(self, latency_ms, color, level):
+    def test_colour_zone_and_level(
+        self, latency_ms: float, color: LatencyColor, level: int
+    ) -> None:
         assert latency_color(latency_ms) == color
         assert bar_level(latency_ms) == level
         assert classify_cells([ok(latency_ms)]) == [
@@ -72,26 +74,26 @@ class TestFailures:
             (CheckType.TAILSCALE, "!"),
         ],
     )
-    def test_failure_letter(self, check_type, letter):
+    def test_failure_letter(self, check_type: CheckType, letter: str) -> None:
         assert classify_cells([failed(check_type)]) == [
             GraphCell(CellKind.FAILURE, color=LatencyColor.RED, letter=letter)
         ]
 
 
 class TestGaps:
-    def test_no_results_is_all_empty(self):
+    def test_no_results_is_all_empty(self) -> None:
         assert classify_cells([None, None]) == [EMPTY_CELL, EMPTY_CELL]
 
-    def test_empty_before_the_first_and_after_the_last_result(self):
+    def test_empty_before_the_first_and_after_the_last_result(self) -> None:
         cells = classify_cells([None, ok(1.0), None])
         assert cells[0] == EMPTY_CELL and cells[2] == EMPTY_CELL
         assert cells[1].kind == CellKind.BAR
 
-    def test_short_gap_between_results(self):
+    def test_short_gap_between_results(self) -> None:
         results = [ok(1.0), *[None] * MAX_ERROR_GAP_SIZE, ok(1.0)]
         assert classify_cells(results)[1:-1] == [GAP_CELL] * MAX_ERROR_GAP_SIZE
 
-    def test_long_gap_is_empty(self):
+    def test_long_gap_is_empty(self) -> None:
         results = [ok(1.0), *[None] * (MAX_ERROR_GAP_SIZE + 1), ok(1.0)]
         cells = classify_cells(results)
         assert cells[1:-1] == [EMPTY_CELL] * (MAX_ERROR_GAP_SIZE + 1)

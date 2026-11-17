@@ -20,34 +20,34 @@ from hydraping.core.models import (
 class TestEndpointParsing:
     """Test Endpoint.parse() method."""
 
-    def test_parse_ipv4_address(self):
+    def test_parse_ipv4_address(self) -> None:
         """Test parsing plain IPv4 address."""
         endpoint = Endpoint.parse("8.8.8.8")
         assert isinstance(endpoint, IPEndpoint)
         assert endpoint.ip == "8.8.8.8"
         assert endpoint.raw == "8.8.8.8"
 
-    def test_parse_ipv6_address(self):
+    def test_parse_ipv6_address(self) -> None:
         """Test parsing plain IPv6 address."""
         endpoint = Endpoint.parse("2001:4860:4860::8888")
         assert isinstance(endpoint, IPEndpoint)
         assert endpoint.ip == "2001:4860:4860::8888"
 
-    def test_parse_ipv4_port(self):
+    def test_parse_ipv4_port(self) -> None:
         """Test parsing IPv4:port."""
         endpoint = Endpoint.parse("1.1.1.1:53")
         assert isinstance(endpoint, IPPortEndpoint)
         assert endpoint.ip == "1.1.1.1"
         assert endpoint.port == 53
 
-    def test_parse_ipv6_port_bracket_notation(self):
+    def test_parse_ipv6_port_bracket_notation(self) -> None:
         """Test parsing [IPv6]:port with brackets."""
         endpoint = Endpoint.parse("[2001:4860:4860::8888]:53")
         assert isinstance(endpoint, IPPortEndpoint)
         assert endpoint.ip == "2001:4860:4860::8888"
         assert endpoint.port == 53
 
-    def test_parse_domain(self):
+    def test_parse_domain(self) -> None:
         """Test parsing domain name."""
         endpoint = Endpoint.parse("google.com")
         assert isinstance(endpoint, DomainEndpoint)
@@ -55,7 +55,7 @@ class TestEndpointParsing:
         assert endpoint.port == 80  # Default port
         assert endpoint.port_specified is False
 
-    def test_parse_domain_port(self):
+    def test_parse_domain_port(self) -> None:
         """Test parsing domain:port."""
         endpoint = Endpoint.parse("example.com:8080")
         assert isinstance(endpoint, DomainEndpoint)
@@ -63,7 +63,7 @@ class TestEndpointParsing:
         assert endpoint.port == 8080
         assert endpoint.port_specified is True
 
-    def test_parse_domain_port_common_ports(self):
+    def test_parse_domain_port_common_ports(self) -> None:
         """Test parsing domain with common ports."""
         # Port 443
         endpoint = Endpoint.parse("api.example.com:443")
@@ -79,7 +79,7 @@ class TestEndpointParsing:
         assert endpoint.port == 3000
         assert endpoint.port_specified is True
 
-    def test_parse_http_url(self):
+    def test_parse_http_url(self) -> None:
         """Test parsing HTTP URL."""
         endpoint = Endpoint.parse("http://example.com/path")
         assert isinstance(endpoint, HTTPEndpoint)
@@ -88,7 +88,7 @@ class TestEndpointParsing:
         assert endpoint.port == 80
         assert endpoint.path == "/path"
 
-    def test_parse_https_url(self):
+    def test_parse_https_url(self) -> None:
         """Test parsing HTTPS URL."""
         endpoint = Endpoint.parse("https://example.com:8443/api")
         assert isinstance(endpoint, HTTPEndpoint)
@@ -101,37 +101,37 @@ class TestEndpointParsing:
 class TestEndpointDisplayNames:
     """Test endpoint display name formatting."""
 
-    def test_ipv4_port_display_name(self):
+    def test_ipv4_port_display_name(self) -> None:
         """Test IPv4:port display name."""
         endpoint = IPPortEndpoint(raw="1.1.1.1:53", ip="1.1.1.1", port=53)
         assert endpoint.display_name == "1.1.1.1:53"
 
-    def test_ipv6_port_display_name_with_brackets(self):
+    def test_ipv6_port_display_name_with_brackets(self) -> None:
         """Test IPv6:port displays with bracket notation."""
         endpoint = IPPortEndpoint(raw="[2001:db8::1]:80", ip="2001:db8::1", port=80)
         assert endpoint.display_name == "[2001:db8::1]:80"
 
-    def test_udp_port_display_name_ipv4(self):
+    def test_udp_port_display_name_ipv4(self) -> None:
         """Test UDP port display name for IPv4."""
         endpoint = UDPPortEndpoint(raw="1.1.1.1:53", ip="1.1.1.1", port=53)
         assert endpoint.display_name == "1.1.1.1:53 (UDP)"
 
-    def test_udp_port_display_name_ipv6(self):
+    def test_udp_port_display_name_ipv6(self) -> None:
         """Test UDP port display name for IPv6 with brackets."""
         endpoint = UDPPortEndpoint(raw="[2001:db8::1]:53", ip="2001:db8::1", port=53)
         assert endpoint.display_name == "[2001:db8::1]:53 (UDP)"
 
-    def test_domain_default_port_display_name(self):
+    def test_domain_default_port_display_name(self) -> None:
         """Test domain with default port (80) doesn't show port."""
         endpoint = DomainEndpoint(raw="example.com", domain="example.com", port=80)
         assert endpoint.display_name == "example.com"
 
-    def test_domain_custom_port_display_name(self):
+    def test_domain_custom_port_display_name(self) -> None:
         """Test domain with custom port shows port."""
         endpoint = DomainEndpoint(raw="example.com:8080", domain="example.com", port=8080)
         assert endpoint.display_name == "example.com:8080"
 
-    def test_custom_name_overrides_default(self):
+    def test_custom_name_overrides_default(self) -> None:
         """Test custom_name overrides default formatting."""
         endpoint = IPEndpoint(raw="8.8.8.8", ip="8.8.8.8", custom_name="Google DNS")
         assert endpoint.display_name == "Google DNS"
@@ -140,45 +140,45 @@ class TestEndpointDisplayNames:
 class TestPrimaryCheckType:
     """Test default primary check type selection."""
 
-    def test_ipportendpoint_defaults_to_tcp(self):
+    def test_ipportendpoint_defaults_to_tcp(self) -> None:
         """Test IPPortEndpoint uses TCP as primary check by default."""
         endpoint = IPPortEndpoint(raw="1.1.1.1:8080", ip="1.1.1.1", port=8080)
         assert endpoint.get_primary_check_type() == CheckType.TCP
 
-    def test_domain_without_explicit_port_uses_icmp(self):
+    def test_domain_without_explicit_port_uses_icmp(self) -> None:
         """Test DomainEndpoint without explicit port uses ICMP as primary."""
         endpoint = DomainEndpoint(
             raw="example.com", domain="example.com", port=80, port_specified=False
         )
         assert endpoint.get_primary_check_type() == CheckType.ICMP
 
-    def test_domain_explicit_port_80_uses_tcp(self):
+    def test_domain_explicit_port_80_uses_tcp(self) -> None:
         """Test DomainEndpoint with explicit port 80 uses TCP as primary."""
         endpoint = DomainEndpoint(
             raw="example.com:80", domain="example.com", port=80, port_specified=True
         )
         assert endpoint.get_primary_check_type() == CheckType.TCP
 
-    def test_domain_custom_port_uses_tcp(self):
+    def test_domain_custom_port_uses_tcp(self) -> None:
         """Test DomainEndpoint with custom port uses TCP as primary."""
         endpoint = DomainEndpoint(
             raw="example.com:8080", domain="example.com", port=8080, port_specified=True
         )
         assert endpoint.get_primary_check_type() == CheckType.TCP
 
-    def test_domain_port_443_uses_tcp(self):
+    def test_domain_port_443_uses_tcp(self) -> None:
         """Test DomainEndpoint with port 443 uses TCP as primary."""
         endpoint = DomainEndpoint(
             raw="example.com:443", domain="example.com", port=443, port_specified=True
         )
         assert endpoint.get_primary_check_type() == CheckType.TCP
 
-    def test_httpendpoint_defaults_to_http(self):
+    def test_httpendpoint_defaults_to_http(self) -> None:
         """Test HTTPEndpoint uses HTTP as primary check by default."""
         endpoint = HTTPEndpoint.from_string("https://example.com")
         assert endpoint.get_primary_check_type() == CheckType.HTTP
 
-    def test_primary_layer_carries_the_port_only_for_tcp(self):
+    def test_primary_layer_carries_the_port_only_for_tcp(self) -> None:
         assert Endpoint.parse("192.0.2.1").get_primary_layer() == LayerKey(CheckType.ICMP)
         assert Endpoint.parse("192.0.2.1:22").get_primary_layer() == LayerKey(CheckType.TCP, 22)
         assert Endpoint.parse("example.com:8080").get_primary_layer() == LayerKey(
@@ -189,14 +189,15 @@ class TestPrimaryCheckType:
         https.primary_check_type = CheckType.TCP
         assert https.get_primary_layer() == LayerKey(CheckType.TCP, 8443)
 
-    def test_domain_without_a_port_probes_80_and_443_and_graphs_443_for_tcp(self):
+    def test_domain_without_a_port_probes_80_and_443_and_graphs_443_for_tcp(self) -> None:
         endpoint = Endpoint.parse("example.com")
+        assert isinstance(endpoint, DomainEndpoint)
         assert endpoint.tcp_ports() == [80, 443]
         assert endpoint.get_primary_layer() == LayerKey(CheckType.ICMP)
         endpoint.primary_check_type = CheckType.TCP
         assert endpoint.get_primary_layer() == LayerKey(CheckType.TCP, 443)
 
-    def test_layer_key_of_a_measurement_splits_only_tcp_by_port(self):
+    def test_layer_key_of_a_measurement_splits_only_tcp_by_port(self) -> None:
         tcp = Measurement(check_type=CheckType.TCP, success=True, latency_ms=1.0, port=443)
         tls = Measurement(check_type=CheckType.TLS, success=True, latency_ms=1.0, port=443)
         assert tcp.layer_key == LayerKey(CheckType.TCP, 443)
@@ -204,7 +205,7 @@ class TestPrimaryCheckType:
         assert LayerKey(CheckType.TCP, 443).label == "TCP:443"
         assert LayerKey(CheckType.DNS).label == "DNS"
 
-    def test_only_https_endpoints_have_a_tls_layer(self):
+    def test_only_https_endpoints_have_a_tls_layer(self) -> None:
         https = HTTPEndpoint.from_string("https://example.com/")
         http = HTTPEndpoint.from_string("http://example.com/")
         assert https.uses_tls and not http.uses_tls
@@ -222,7 +223,7 @@ class TestPrimaryCheckType:
             CheckType.HTTP,
         ]
 
-    def test_https_path_keeps_the_query_string(self):
+    def test_https_path_keeps_the_query_string(self) -> None:
         endpoint = HTTPEndpoint.from_string("https://example.com/health?probe=1")
         assert endpoint.path == "/health?probe=1"
 
@@ -230,7 +231,7 @@ class TestPrimaryCheckType:
 class TestCheckResult:
     """Test CheckResult validation."""
 
-    def test_from_measurement_keeps_every_field(self):
+    def test_from_measurement_keeps_every_field(self) -> None:
         measurement = Measurement(
             check_type=CheckType.TCP,
             success=True,
@@ -245,7 +246,7 @@ class TestCheckResult:
         assert result.resolved_ip == "192.0.2.1"
         assert (result.started_at, result.finished_at) == (10.0, 10.1)
 
-    def test_successful_check_requires_latency(self):
+    def test_successful_check_requires_latency(self) -> None:
         """Test that successful checks must have latency."""
         with pytest.raises(ValueError, match="Successful check must have latency"):
             CheckResult(
@@ -256,7 +257,7 @@ class TestCheckResult:
                 latency_ms=None,  # Missing latency
             )
 
-    def test_failed_check_requires_error_message(self):
+    def test_failed_check_requires_error_message(self) -> None:
         """Test that failed checks must have error message."""
         with pytest.raises(ValueError, match="Failed check must have error message"):
             CheckResult(
@@ -267,7 +268,7 @@ class TestCheckResult:
                 error_message=None,  # Missing error
             )
 
-    def test_valid_successful_check(self):
+    def test_valid_successful_check(self) -> None:
         """Test creating valid successful check."""
         result = CheckResult(
             started_at=1000.0,
@@ -279,7 +280,7 @@ class TestCheckResult:
         assert result.success
         assert result.latency_ms == 10.5
 
-    def test_skipped_check_names_the_layer_that_failed(self):
+    def test_skipped_check_names_the_layer_that_failed(self) -> None:
         tcp = Measurement(check_type=CheckType.TCP, success=False, error_message="refused")
         http = Measurement.skipped_after(CheckType.HTTP, tcp)
         assert http.skipped and not http.success
@@ -292,7 +293,7 @@ class TestCheckResult:
         result = CheckResult.from_measurement(http, started_at=1.0, finished_at=1.1)
         assert result.skipped and result.blocked_by == CheckType.TCP
 
-    def test_skipped_check_must_be_consistent(self):
+    def test_skipped_check_must_be_consistent(self) -> None:
         with pytest.raises(ValueError, match="Skipped check"):
             Measurement(check_type=CheckType.HTTP, success=False, error_message="x", skipped=True)
         with pytest.raises(ValueError, match="Only a skipped check"):
@@ -303,7 +304,7 @@ class TestCheckResult:
                 blocked_by=CheckType.TCP,
             )
 
-    def test_valid_failed_check(self):
+    def test_valid_failed_check(self) -> None:
         """Test creating valid failed check."""
         result = CheckResult(
             started_at=1000.0,
@@ -317,7 +318,7 @@ class TestCheckResult:
 
 
 class TestCheckTypePriority:
-    def test_check_type_priority_order(self):
+    def test_check_type_priority_order(self) -> None:
         """Test that CHECK_TYPE_PRIORITY is correctly ordered."""
         assert CHECK_TYPE_PRIORITY == [
             CheckType.HTTP,
@@ -333,12 +334,12 @@ class TestCheckTypePriority:
 class TestUDPProbeData:
     """Test UDP probe data configuration."""
 
-    def test_udp_endpoint_default_empty_probe(self):
+    def test_udp_endpoint_default_empty_probe(self) -> None:
         """Test that UDP endpoints default to empty probe."""
         endpoint = UDPPortEndpoint(raw="1.1.1.1:53", ip="1.1.1.1", port=53)
         assert endpoint.probe_data == b""
 
-    def test_udp_endpoint_custom_probe(self):
+    def test_udp_endpoint_custom_probe(self) -> None:
         """Test UDP endpoint with custom probe data."""
         probe = b"\xde\xad\xbe\xef"
         endpoint = UDPPortEndpoint(raw="1.1.1.1:53", ip="1.1.1.1", port=53, probe_data=probe)

@@ -18,7 +18,7 @@ from hydraping.core.display import (
     route_label,
 )
 from hydraping.core.engine import Engine
-from hydraping.core.models import Endpoint
+from hydraping.core.models import CheckResult, Endpoint
 from hydraping.core.snapshot import ChainSnapshot, EndpointSnapshot
 from hydraping.tui.constants import RICH_COLORS
 from hydraping.tui.graph import LatencyGraph
@@ -198,12 +198,14 @@ class Dashboard:
 
     def _add_endpoint_row(
         self, table: Table, row: EndpointSnapshot, widths: ColumnWidths, indent: str = ""
-    ):
+    ) -> None:
         latency = latency_text(row.current)
         latency_style = RICH_COLORS[latency.color] if latency.color is not None else "dim"
 
         primary_layer = row.primary_layer()
-        results = primary_layer.results() if primary_layer is not None else [None] * widths.graph
+        results: list[CheckResult | None] = (
+            primary_layer.results() if primary_layer is not None else [None] * widths.graph
+        )
         cells = [
             Text(indent + row.endpoint.display_name, style="bold"),
             self.graph.render(results),

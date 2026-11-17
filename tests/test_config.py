@@ -1,5 +1,7 @@
 """Tests for configuration loading and parsing."""
 
+from pathlib import Path
+
 import pytest
 
 from hydraping.core.config import (
@@ -22,7 +24,7 @@ from hydraping.core.models import (
 class TestConfigLoading:
     """Test loading configuration from TOML files."""
 
-    def test_load_simple_config(self, tmp_path):
+    def test_load_simple_config(self, tmp_path: Path) -> None:
         """Test loading a simple config with basic endpoints."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
@@ -52,7 +54,7 @@ graph_width = 0
         assert isinstance(config.endpoints[1], DomainEndpoint)
         assert isinstance(config.endpoints[2], HTTPEndpoint)
 
-    def test_load_config_with_custom_names(self, tmp_path):
+    def test_load_config_with_custom_names(self, tmp_path: Path) -> None:
         """Test loading config with custom endpoint names."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
@@ -68,7 +70,7 @@ targets = [
         assert config.endpoints[0].custom_name == "Google DNS"
         assert config.endpoints[1].custom_name == "Cloudflare DNS"
 
-    def test_load_config_with_udp_endpoints(self, tmp_path):
+    def test_load_config_with_udp_endpoints(self, tmp_path: Path) -> None:
         """Test loading UDP endpoints from config."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
@@ -85,7 +87,7 @@ targets = [
         assert config.endpoints[0].ip == "1.1.1.1"
         assert config.endpoints[0].port == 53
 
-    def test_load_config_with_udp_probe_hex(self, tmp_path):
+    def test_load_config_with_udp_probe_hex(self, tmp_path: Path) -> None:
         """Test loading UDP endpoint with hex probe data."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
@@ -101,7 +103,7 @@ targets = [
         assert isinstance(endpoint, UDPPortEndpoint)
         assert endpoint.probe_data == b"\xde\xad\xbe\xef"
 
-    def test_load_config_with_udp_probe_ascii(self, tmp_path):
+    def test_load_config_with_udp_probe_ascii(self, tmp_path: Path) -> None:
         """Test loading UDP endpoint with ASCII probe data."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
@@ -117,7 +119,7 @@ targets = [
         assert isinstance(endpoint, UDPPortEndpoint)
         assert endpoint.probe_data == b"hello"
 
-    def test_load_config_with_ip_version(self, tmp_path):
+    def test_load_config_with_ip_version(self, tmp_path: Path) -> None:
         """Test loading config with IP version preference."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
@@ -133,7 +135,7 @@ targets = [
         assert config.endpoints[0].ip_version == 4
         assert config.endpoints[1].ip_version == 6
 
-    def test_load_config_with_http_success_status(self, tmp_path):
+    def test_load_config_with_http_success_status(self, tmp_path: Path) -> None:
         """Test loading config with HTTP success status threshold."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
@@ -148,7 +150,7 @@ http_success_status_max = 299
         config = Config.load(config_file)
         assert config.checks.http_success_status_max == 299
 
-    def test_load_config_with_adaptive_interval(self, tmp_path):
+    def test_load_config_with_adaptive_interval(self, tmp_path: Path) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
 version = 2
@@ -167,7 +169,9 @@ adaptive_interval = false
         assert checks.probe_interval_max_seconds == 2.0
         assert checks.adaptive_interval is False
 
-    def test_load_config_with_a_short_bucket_shortens_the_default_maximum_interval(self, tmp_path):
+    def test_load_config_with_a_short_bucket_shortens_the_default_maximum_interval(
+        self, tmp_path: Path
+    ) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
 version = 2
@@ -180,7 +184,9 @@ bucket_seconds = 2.0
 
         assert Config.load(config_file).checks.probe_interval_max_seconds == 2.0
 
-    def test_load_config_names_the_maximum_interval_that_exceeds_the_bucket(self, tmp_path):
+    def test_load_config_names_the_maximum_interval_that_exceeds_the_bucket(
+        self, tmp_path: Path
+    ) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
 version = 2
@@ -199,7 +205,7 @@ probe_interval_max_seconds = 3.0
         ):
             Config.load(config_file)
 
-    def test_insecure_turns_off_certificate_verification_for_https(self, tmp_path):
+    def test_insecure_turns_off_certificate_verification_for_https(self, tmp_path: Path) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
 version = 2
@@ -217,7 +223,7 @@ targets = [
         assert tls_primary.primary_check_type == CheckType.TLS
         assert default.insecure is False
 
-    def test_insecure_on_an_endpoint_without_tls_is_an_error(self, tmp_path):
+    def test_insecure_on_an_endpoint_without_tls_is_an_error(self, tmp_path: Path) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
 version = 2
@@ -227,7 +233,7 @@ targets = [{ url = "http://example.com/", insecure = true }]
         with pytest.raises(ValueError, match="only https:// endpoints have a TLS layer"):
             Config.load(config_file)
 
-    def test_expect_body_is_kept_on_http_targets_and_chain_hops(self, tmp_path):
+    def test_expect_body_is_kept_on_http_targets_and_chain_hops(self, tmp_path: Path) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
 version = 2
@@ -255,7 +261,9 @@ hops = [{ url = "http://example.com/health", expect_body = "ok" }]
             '{ url = "192.0.2.1:53", protocol = "udp", expect_body = "ok" }',
         ],
     )
-    def test_expect_body_on_an_endpoint_without_http_is_an_error(self, tmp_path, endpoint):
+    def test_expect_body_on_an_endpoint_without_http_is_an_error(
+        self, tmp_path: Path, endpoint: str
+    ) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text(f"version = 2\n[endpoints]\ntargets = [{endpoint}]\n")
         with pytest.raises(ValueError, match="only http:// and https:// endpoints have an HTTP"):
@@ -264,7 +272,7 @@ hops = [{ url = "http://example.com/health", expect_body = "ok" }]
     @pytest.mark.parametrize(
         "check", ['check = "dns", query = "example.com"', 'check = "tailscale"']
     )
-    def test_expect_body_on_a_check_endpoint_is_an_error(self, tmp_path, check):
+    def test_expect_body_on_a_check_endpoint_is_an_error(self, tmp_path: Path, check: str) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text(
             f'version = 2\n[endpoints]\ntargets = [{{ url = "192.0.2.1", {check}, '
@@ -274,7 +282,7 @@ hops = [{ url = "http://example.com/health", expect_body = "ok" }]
             Config.load(config_file)
 
     @pytest.mark.parametrize("value", ['""', "1", "true", '["ok"]'])
-    def test_expect_body_must_be_a_non_empty_string(self, tmp_path, value):
+    def test_expect_body_must_be_a_non_empty_string(self, tmp_path: Path, value: str) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text(
             "version = 2\n[endpoints]\n"
@@ -283,7 +291,9 @@ hops = [{ url = "http://example.com/health", expect_body = "ok" }]
         with pytest.raises(ValueError, match="expect_body must be a non-empty string"):
             Config.load(config_file)
 
-    def test_endpoints_with_different_expect_body_are_measured_separately(self, tmp_path):
+    def test_endpoints_with_different_expect_body_are_measured_separately(
+        self, tmp_path: Path
+    ) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
 version = 2
@@ -303,27 +313,27 @@ hops = [{ url = "https://192.0.2.1/cdn-cgi/trace", expect_body = "marker=off" }]
         assert engine.chain_hop_indices == [[2]]
         assert [e.expect_body for e in engine.measured] == ["marker=on", None, "marker=off"]
 
-    def _load_checks(self, tmp_path, checks_body: str) -> ChecksConfig:
+    def _load_checks(self, tmp_path: Path, checks_body: str) -> ChecksConfig:
         config_file = tmp_path / "test.toml"
         config_file.write_text(
             f'version = 2\n[endpoints]\ntargets = ["192.0.2.1"]\n[checks]\n{checks_body}\n'
         )
         return Config.load(config_file).checks
 
-    def test_history_seconds_defaults_to_one_hour(self, tmp_path):
+    def test_history_seconds_defaults_to_one_hour(self, tmp_path: Path) -> None:
         assert self._load_checks(tmp_path, "timeout_seconds = 5.0").history_seconds == 3600
 
-    def test_history_seconds_custom(self, tmp_path):
+    def test_history_seconds_custom(self, tmp_path: Path) -> None:
         assert self._load_checks(tmp_path, "history_seconds = 600").history_seconds == 600
 
     @pytest.mark.parametrize("value", ["0", "-60", "true", '"3600"'])
-    def test_history_seconds_must_be_a_positive_number(self, tmp_path, value):
+    def test_history_seconds_must_be_a_positive_number(self, tmp_path: Path, value: str) -> None:
         with pytest.raises(
             ValueError, match="checks.history_seconds must be a positive number, got: "
         ):
             self._load_checks(tmp_path, f"history_seconds = {value}")
 
-    def test_history_seconds_must_cover_one_bucket(self, tmp_path):
+    def test_history_seconds_must_cover_one_bucket(self, tmp_path: Path) -> None:
         with pytest.raises(
             ValueError,
             match=r"checks.history_seconds must be at least checks.bucket_seconds \(5.0\), "
@@ -332,27 +342,29 @@ hops = [{ url = "https://192.0.2.1/cdn-cgi/trace", expect_body = "marker=off" }]
             self._load_checks(tmp_path, "history_seconds = 4.0")
         assert self._load_checks(tmp_path, "history_seconds = 5.0").history_seconds == 5.0
 
-    def _load_ui(self, tmp_path, ui_body: str) -> UIConfig:
+    def _load_ui(self, tmp_path: Path, ui_body: str) -> UIConfig:
         config_file = tmp_path / "test.toml"
         config_file.write_text(
             f'version = 2\n[endpoints]\ntargets = ["192.0.2.1"]\n[ui]\n{ui_body}\n'
         )
         return Config.load(config_file).ui
 
-    def test_tray_refresh_seconds_defaults_to_five(self, tmp_path):
+    def test_tray_refresh_seconds_defaults_to_five(self, tmp_path: Path) -> None:
         assert self._load_ui(tmp_path, "graph_width = 0").tray_refresh_seconds == 5.0
 
-    def test_tray_refresh_seconds_custom(self, tmp_path):
+    def test_tray_refresh_seconds_custom(self, tmp_path: Path) -> None:
         assert self._load_ui(tmp_path, "tray_refresh_seconds = 2.5").tray_refresh_seconds == 2.5
 
     @pytest.mark.parametrize("value", ["0", "-1.0", '"5"', "true"])
-    def test_tray_refresh_seconds_must_be_a_positive_number(self, tmp_path, value):
+    def test_tray_refresh_seconds_must_be_a_positive_number(
+        self, tmp_path: Path, value: str
+    ) -> None:
         with pytest.raises(
             ValueError, match="ui.tray_refresh_seconds must be a positive number, got: "
         ):
             self._load_ui(tmp_path, f"tray_refresh_seconds = {value}")
 
-    def test_tray_leaves_a_target_out_of_the_top_bar(self, tmp_path):
+    def test_tray_leaves_a_target_out_of_the_top_bar(self, tmp_path: Path) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
 version = 2
@@ -363,7 +375,7 @@ targets = [{ url = "192.0.2.1", tray = false }, "192.0.2.2"]
         assert hidden.tray is False
         assert shown.tray is True
 
-    def test_tray_must_be_a_bool(self, tmp_path):
+    def test_tray_must_be_a_bool(self, tmp_path: Path) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
 version = 2
@@ -373,7 +385,7 @@ targets = [{ url = "192.0.2.1", tray = "no" }]
         with pytest.raises(ValueError, match="tray must be true or false"):
             Config.load(config_file)
 
-    def test_tray_on_a_chain_hop_is_an_error(self, tmp_path):
+    def test_tray_on_a_chain_hop_is_an_error(self, tmp_path: Path) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
 version = 2
@@ -384,7 +396,7 @@ hops = [{ url = "192.0.2.1", tray = false }]
         with pytest.raises(ValueError, match="tray has no effect on the chain hop 192.0.2.1"):
             Config.load(config_file)
 
-    def test_insecure_must_be_a_bool(self, tmp_path):
+    def test_insecure_must_be_a_bool(self, tmp_path: Path) -> None:
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
 version = 2
@@ -394,7 +406,7 @@ targets = [{ url = "https://example.com/", insecure = "yes" }]
         with pytest.raises(ValueError, match="insecure must be true or false"):
             Config.load(config_file)
 
-    def test_invalid_config_no_endpoints(self, tmp_path):
+    def test_invalid_config_no_endpoints(self, tmp_path: Path) -> None:
         """Test that config without endpoints raises error."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
@@ -406,7 +418,7 @@ targets = []
         with pytest.raises(ValueError, match="No endpoints configured"):
             Config.load(config_file)
 
-    def test_invalid_config_missing_url(self, tmp_path):
+    def test_invalid_config_missing_url(self, tmp_path: Path) -> None:
         """Test that endpoint object without url raises error."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
@@ -420,7 +432,7 @@ targets = [
         with pytest.raises(ValueError, match="missing 'url' field"):
             Config.load(config_file)
 
-    def test_invalid_udp_probe_hex(self, tmp_path):
+    def test_invalid_udp_probe_hex(self, tmp_path: Path) -> None:
         """Test that invalid hex in probe_hex raises error."""
         config_file = tmp_path / "test.toml"
         config_file.write_text("""
@@ -438,24 +450,24 @@ targets = [
 class TestUnknownKeys:
     """Test that keys settings.toml does not support stop loading with the key path."""
 
-    def _write(self, tmp_path, body: str):
+    def _write(self, tmp_path: Path, body: str) -> Path:
         config_file = tmp_path / "settings.toml"
         config_file.write_text('version = 2\n[endpoints]\ntargets = ["192.0.2.1"]\n' + body)
         return config_file
 
-    def test_unknown_top_level_table(self, tmp_path):
+    def test_unknown_top_level_table(self, tmp_path: Path) -> None:
         config_file = self._write(tmp_path, "\n[graphs]\nwidth = 3\n")
         with pytest.raises(ValueError) as error:
             Config.load(config_file)
         assert str(error.value) == f"Unknown key 'graphs' in {config_file}"
 
-    def test_unknown_key_in_checks(self, tmp_path):
+    def test_unknown_key_in_checks(self, tmp_path: Path) -> None:
         config_file = self._write(tmp_path, "\n[checks]\nintervl_seconds = 1.0\n")
         with pytest.raises(ValueError) as error:
             Config.load(config_file)
         assert str(error.value) == f"Unknown key 'checks.intervl_seconds' in {config_file}"
 
-    def test_unknown_key_in_endpoint_object(self, tmp_path):
+    def test_unknown_key_in_endpoint_object(self, tmp_path: Path) -> None:
         config_file = tmp_path / "settings.toml"
         config_file.write_text("""
 version = 2
@@ -471,13 +483,13 @@ targets = [
 
 
 class TestConfigVersion:
-    def test_unsupported_version_is_an_error(self, tmp_path):
+    def test_unsupported_version_is_an_error(self, tmp_path: Path) -> None:
         config_file = tmp_path / "settings.toml"
         config_file.write_text('version = 3\n[endpoints]\ntargets = ["192.0.2.1"]\n')
         with pytest.raises(ValueError, match="Unsupported config version 3"):
             Config.load(config_file)
 
-    def test_v1_keys_in_a_v2_file_are_unknown(self, tmp_path):
+    def test_v1_keys_in_a_v2_file_are_unknown(self, tmp_path: Path) -> None:
         config_file = tmp_path / "settings.toml"
         config_file.write_text(
             'version = 2\n[endpoints]\ntargets = ["192.0.2.1"]\n[checks]\ninterval_seconds = 5.0\n'
@@ -490,21 +502,21 @@ class TestConfigVersion:
 class TestConfigShape:
     """Test that values of the wrong kind stop loading with the key path."""
 
-    def test_table_that_is_not_a_table(self, tmp_path):
+    def test_table_that_is_not_a_table(self, tmp_path: Path) -> None:
         config_file = tmp_path / "settings.toml"
         config_file.write_text('version = 2\nchecks = 5\n[endpoints]\ntargets = ["192.0.2.1"]\n')
         with pytest.raises(ValueError) as error:
             Config.load(config_file)
         assert str(error.value) == f"'checks' must be a table in {config_file}"
 
-    def test_targets_that_is_not_a_list(self, tmp_path):
+    def test_targets_that_is_not_a_list(self, tmp_path: Path) -> None:
         config_file = tmp_path / "settings.toml"
         config_file.write_text('version = 2\n[endpoints]\ntargets = "192.0.2.1"\n')
         with pytest.raises(ValueError) as error:
             Config.load(config_file)
         assert str(error.value) == f"'endpoints.targets' must be a list in {config_file}"
 
-    def test_target_that_is_neither_string_nor_table(self, tmp_path):
+    def test_target_that_is_neither_string_nor_table(self, tmp_path: Path) -> None:
         config_file = tmp_path / "settings.toml"
         config_file.write_text('version = 2\n[endpoints]\ntargets = ["192.0.2.1", 53]\n')
         with pytest.raises(ValueError) as error:
@@ -517,12 +529,12 @@ class TestConfigShape:
 class TestConfigClasses:
     """Test configuration dataclasses."""
 
-    def test_dns_config_defaults(self):
+    def test_dns_config_defaults(self) -> None:
         """Test DNSConfig default values."""
         dns = DNSConfig()
         assert dns.servers == []
 
-    def test_checks_config_defaults(self):
+    def test_checks_config_defaults(self) -> None:
         """Test ChecksConfig default values."""
         checks = ChecksConfig()
         assert checks.probe_interval_seconds == 1.0
@@ -533,7 +545,7 @@ class TestConfigClasses:
         assert checks.history_seconds == 3600
         assert checks.http_success_status_max == 399
 
-    def test_checks_config_rejects_non_positive_timing(self):
+    def test_checks_config_rejects_non_positive_timing(self) -> None:
         with pytest.raises(ValueError, match="checks.bucket_seconds must be a positive number"):
             ChecksConfig(bucket_seconds=0)
         with pytest.raises(
@@ -541,7 +553,9 @@ class TestConfigClasses:
         ):
             ChecksConfig(probe_interval_max_seconds=-1.0)
 
-    def test_checks_config_keeps_the_maximum_interval_between_the_minimum_and_the_bucket(self):
+    def test_checks_config_keeps_the_maximum_interval_between_the_minimum_and_the_bucket(
+        self,
+    ) -> None:
         with pytest.raises(
             ValueError,
             match=r"probe_interval_max_seconds must be at least checks.probe_interval_seconds "
@@ -557,17 +571,19 @@ class TestConfigClasses:
         assert ChecksConfig(probe_interval_max_seconds=1.0).probe_interval_max_seconds == 1.0
         assert ChecksConfig(probe_interval_max_seconds=5.0).probe_interval_max_seconds == 5.0
 
-    def test_checks_config_maximum_interval_defaults_to_the_shorter_of_five_and_the_bucket(self):
+    def test_checks_config_maximum_interval_defaults_to_the_shorter_of_five_and_the_bucket(
+        self,
+    ) -> None:
         assert ChecksConfig(bucket_seconds=3.0).probe_interval_max_seconds == 3.0
         assert ChecksConfig(bucket_seconds=30.0).probe_interval_max_seconds == 5.0
         with pytest.raises(ValueError, match="checks.bucket_seconds must be a positive number"):
-            ChecksConfig(bucket_seconds="5")
+            ChecksConfig(bucket_seconds="5")  # type: ignore[arg-type]  # wrong type on purpose
 
-    def test_checks_config_adaptive_interval_must_be_a_bool(self):
+    def test_checks_config_adaptive_interval_must_be_a_bool(self) -> None:
         with pytest.raises(ValueError, match="checks.adaptive_interval must be true or false"):
-            ChecksConfig(adaptive_interval="yes")
+            ChecksConfig(adaptive_interval="yes")  # type: ignore[arg-type]  # wrong type on purpose
 
-    def test_ui_config_defaults(self):
+    def test_ui_config_defaults(self) -> None:
         """Test UIConfig default values."""
         ui = UIConfig()
         assert ui.graph_width == 0
@@ -577,7 +593,7 @@ class TestConfigClasses:
 class TestCreateDefaultConfig:
     """Test default config file creation."""
 
-    def test_create_default_config(self, tmp_path):
+    def test_create_default_config(self, tmp_path: Path) -> None:
         """Test creating default config file."""
         config_path = tmp_path / "settings.toml"
         created_path = create_default_config(config_path)
@@ -589,7 +605,7 @@ class TestCreateDefaultConfig:
         config = Config.load(created_path)
         assert len(config.endpoints) > 0
 
-    def test_create_default_config_creates_directory(self, tmp_path):
+    def test_create_default_config_creates_directory(self, tmp_path: Path) -> None:
         """Test that creating config creates parent directories."""
         config_path = tmp_path / "subdir" / "config" / "settings.toml"
         created_path = create_default_config(config_path)

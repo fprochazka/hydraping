@@ -16,14 +16,14 @@ SVG = "{http://www.w3.org/2000/svg}"
 
 
 @pytest.fixture
-def data_home(tmp_path, monkeypatch) -> Path:
+def data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "data home"
     monkeypatch.setenv("XDG_DATA_HOME", str(home))
     return home
 
 
 class TestInstall:
-    def test_writes_an_entry_that_starts_the_gui(self, data_home, tmp_path):
+    def test_writes_an_entry_that_starts_the_gui(self, data_home: Path, tmp_path: Path) -> None:
         executable = tmp_path / "bin dir" / "hydraping"
 
         entry_path, _ = launcher.install(executable, None)
@@ -44,7 +44,9 @@ class TestInstall:
             "StartupWMClass": "hydraping",
         }
 
-    def test_passes_the_config_as_an_absolute_path(self, data_home, tmp_path, monkeypatch):
+    def test_passes_the_config_as_an_absolute_path(
+        self, data_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.chdir(tmp_path)
 
         entry_path, _ = launcher.install(Path("/opt/odd $dir/hydraping"), Path("settings.toml"))
@@ -56,13 +58,13 @@ class TestInstall:
             str(tmp_path / "settings.toml"),
         ]
 
-    def test_copies_the_packaged_icon(self, data_home):
+    def test_copies_the_packaged_icon(self, data_home: Path) -> None:
         _, icon_path = launcher.install(Path("/opt/hydraping/bin/hydraping"), None)
 
         assert icon_path == data_home / "icons/hicolor/scalable/apps/hydraping.svg"
         assert icon_path.read_bytes() == launcher.icon_resource().read_bytes()
 
-    def test_replaces_an_existing_launcher(self, data_home):
+    def test_replaces_an_existing_launcher(self, data_home: Path) -> None:
         launcher.install(Path("/old/hydraping"), None)
 
         entry_path, _ = launcher.install(Path("/new/hydraping"), None)
@@ -72,7 +74,7 @@ class TestInstall:
     @pytest.mark.skipif(
         shutil.which("desktop-file-validate") is None, reason="desktop-file-validate missing"
     )
-    def test_the_entry_passes_desktop_file_validate(self, data_home):
+    def test_the_entry_passes_desktop_file_validate(self, data_home: Path) -> None:
         entry_path, _ = launcher.install(
             Path("/opt/odd dir/hydraping"), Path("/etc/hydra ping.toml")
         )
@@ -86,18 +88,20 @@ class TestInstall:
 
 
 class TestRemove:
-    def test_deletes_the_launcher_and_the_icon(self, data_home):
+    def test_deletes_the_launcher_and_the_icon(self, data_home: Path) -> None:
         entry_path, icon_path = launcher.install(Path("/opt/hydraping/bin/hydraping"), None)
 
         assert launcher.remove() == (entry_path, icon_path)
         assert not entry_path.exists()
         assert not icon_path.exists()
 
-    def test_without_a_launcher(self, data_home):
+    def test_without_a_launcher(self, data_home: Path) -> None:
         assert launcher.remove() == (None, None)
 
 
-def test_data_home_defaults_to_dot_local_share(monkeypatch, tmp_path):
+def test_data_home_defaults_to_dot_local_share(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     for value in ("", "relative/dir"):
         monkeypatch.setenv("XDG_DATA_HOME", value)
@@ -105,7 +109,7 @@ def test_data_home_defaults_to_dot_local_share(monkeypatch, tmp_path):
 
 
 class TestPackagedIcon:
-    def test_is_a_plain_square_svg(self):
+    def test_is_a_plain_square_svg(self) -> None:
         root = ElementTree.fromstring(launcher.icon_resource().read_bytes())
 
         assert root.tag == f"{SVG}svg"
@@ -114,7 +118,7 @@ class TestPackagedIcon:
         assert {element.tag for element in root.iter()} == {f"{SVG}svg", f"{SVG}rect"}
         assert not any("href" in name for element in root.iter() for name in element.attrib)
 
-    def test_uses_the_graph_colours(self):
+    def test_uses_the_graph_colours(self) -> None:
         root = ElementTree.fromstring(launcher.icon_resource().read_bytes())
 
         fills = {element.get("fill") for element in root.iter(f"{SVG}rect")}

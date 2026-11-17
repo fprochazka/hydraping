@@ -5,6 +5,8 @@ import re
 import struct
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
 
 import dns.asyncquery
 import dns.message
@@ -53,10 +55,13 @@ class UDPServer(asyncio.DatagramProtocol):
         self.fake = fake
         self.transport: asyncio.DatagramTransport | None = None
 
-    def connection_made(self, transport) -> None:
+    # typeshed's DatagramProtocol narrows the transport the same way, with the same ignore.
+    def connection_made(  # type: ignore[override]
+        self, transport: asyncio.DatagramTransport
+    ) -> None:
         self.transport = transport
 
-    def datagram_received(self, data: bytes, addr) -> None:
+    def datagram_received(self, data: bytes, addr: tuple[Any, ...]) -> None:
         response = self.fake.respond(data)
         if response is not None:
             assert self.transport is not None
@@ -78,7 +83,7 @@ async def dns_server(mode: str, transport: str) -> AsyncIterator[tuple[int, Fake
             udp.close()
         return
 
-    handlers: set[asyncio.Task] = set()
+    handlers: set[asyncio.Task[Any]] = set()
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         task = asyncio.current_task()
@@ -114,20 +119,20 @@ TRANSPORTS = pytest.mark.parametrize("transport", ["udp", "tcp"])
 
 
 class TestRandomQueryName:
-    def test_name_is_a_random_label_under_the_zone(self):
+    def test_name_is_a_random_label_under_the_zone(self) -> None:
         names = {random_query_name("example.com") for _ in range(20)}
 
         assert len(names) == 20
         assert all(re.fullmatch(r"hp-[a-z]{8}\.example\.com\.", name) for name in names)
 
-    def test_dots_around_the_zone_are_ignored(self):
+    def test_dots_around_the_zone_are_ignored(self) -> None:
         assert random_query_name(".example.com.").endswith(".example.com.")
 
 
 class TestCheckServer:
     @TRANSPORTS
     @pytest.mark.parametrize("mode", ["answer", "nxdomain"])
-    async def test_answer_and_nxdomain_are_success(self, transport, mode):
+    async def test_answer_and_nxdomain_are_success(self, transport: str, mode: str) -> None:
         async with dns_server(mode, transport) as (port, fake):
             checker = DNSChecker(timeout=2.0)
             first = await checker.check_server("127.0.0.1", ZONE, port=port, transport=transport)
@@ -141,7 +146,7 @@ class TestCheckServer:
 
     @TRANSPORTS
     @pytest.mark.parametrize(("mode", "error"), [("refused", "REFUSED"), ("servfail", "SERVFAIL")])
-    async def test_error_codes_are_failures(self, transport, mode, error):
+    async def test_error_codes_are_failures(self, transport: str, mode: str, error: str) -> None:
         async with dns_server(mode, transport) as (port, _):
             result = await DNSChecker(timeout=2.0).check_server(
                 "127.0.0.1", ZONE, port=port, transport=transport
@@ -151,7 +156,7 @@ class TestCheckServer:
         assert result.error_message == f"{error} from 127.0.0.1"
 
     @TRANSPORTS
-    async def test_no_answer_is_a_timeout_failure(self, transport):
+    async def test_no_answer_is_a_timeout_failure(self, transport: str) -> None:
         async with dns_server("silent", transport) as (port, _):
             result = await DNSChecker(timeout=0.3).check_server(
                 "127.0.0.1", ZONE, port=port, transport=transport
@@ -160,8 +165,10 @@ class TestCheckServer:
         assert not result.success
         assert result.error_message == "No answer from 127.0.0.1 within 0.3s"
 
-    async def test_error_without_a_message_is_named_by_its_type(self, monkeypatch):
-        async def closed_without_reason(*args, **kwargs):
+    async def test_error_without_a_message_is_named_by_its_type(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def closed_without_reason(*args: Any, **kwargs: Any) -> None:
             raise EOFError()
 
         monkeypatch.setattr(dns.asyncquery, "udp", closed_without_reason)
@@ -170,7 +177,7 @@ class TestCheckServer:
         assert not result.success
         assert result.error_message == "DNS query to 127.0.0.1 failed: EOFError"
 
-    async def test_engine_probe_queries_the_configured_server(self):
+    async def test_engine_probe_queries_the_configured_server(self) -> None:
         async with dns_server("nxdomain", "udp") as (port, fake):
             endpoint = DNSServerEndpoint(raw="dns", ip="127.0.0.1", port=port, zone=ZONE)
             engine = Engine(Config(endpoints=[endpoint]))
@@ -183,19 +190,19 @@ class TestCheckServer:
 
 
 class TestDNSHopConfig:
-    def load(self, tmp_path, target: str) -> Config:
+    def load(self, tmp_path: Path, target: str) -> Config:
         path = tmp_path / "settings.toml"
         path.write_text(f"version = 2\n[endpoints]\ntargets = [{target}]\n")
         return Config.load(path)
 
-    def test_dns_hop_with_defaults(self, tmp_path):
+    def test_dns_hop_with_defaults(self, tmp_path: Path) -> None:
         config = self.load(tmp_path, '{ url = "192.0.2.53", check = "dns", query = "example.com" }')
 
         [endpoint] = config.endpoints
         assert endpoint == DNSServerEndpoint(raw="192.0.2.53", ip="192.0.2.53", zone="example.com")
         assert endpoint.port == 53 and endpoint.transport == "udp"
 
-    def test_port_and_tcp_transport(self, tmp_path):
+    def test_port_and_tcp_transport(self, tmp_path: Path) -> None:
         config = self.load(
             tmp_path,
             '{ url = "[2001:db8::53]:5353", check = "dns", query = "example.com", '
@@ -203,6 +210,7 @@ class TestDNSHopConfig:
         )
 
         [endpoint] = config.endpoints
+        assert isinstance(endpoint, DNSServerEndpoint)
         assert (endpoint.ip, endpoint.port, endpoint.transport) == ("2001:db8::53", 5353, "tcp")
 
     @pytest.mark.parametrize(
@@ -238,6 +246,6 @@ class TestDNSHopConfig:
             ),
         ],
     )
-    def test_invalid_dns_hops_are_rejected(self, tmp_path, target, error):
+    def test_invalid_dns_hops_are_rejected(self, tmp_path: Path, target: str, error: str) -> None:
         with pytest.raises(ValueError, match=re.escape(error)):
             self.load(tmp_path, target)
